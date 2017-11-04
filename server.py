@@ -3,19 +3,20 @@
 # TDA596 Labs - Server Skeleton
 # server/server.py
 # Input: Node_ID total_number_of_ID
-# Student Group:
-# Student names: John Doe & John Doe
+# Student Group: G4
+# Student names: Mayoro BADJI & Diarra TALL
 #------------------------------------------------------------------------------------------------------
 # We import various libraries
-from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler # Socket specifically designed to handle HTTP requests
-import sys # Retrieve arguments
-from urlparse import parse_qs # Parse POST data
-from httplib import HTTPConnection # Create a HTTP connection, as a client (for POST requests to the other vessels)
-from urllib import urlencode # Encode POST content into the HTTP header
-from codecs import open # Open a file
-from threading import  Thread # Thread Management
+import sys  # Retrieve arguments
+import codecs
+from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler  # Socket specifically designed to handle HTTP requests
+from httplib import HTTPConnection  # Create a HTTP connection, as a client (for POST requests to the other vessels)
+from threading import Thread  # Thread Management
+from urllib import urlencode  # Encode POST content into the HTTP header
+from urlparse import parse_qs  # Parse POST data
+
 #------------------------------------------------------------------------------------------------------
-#test git
+
 
 # Global variables for HTML templates
 board_frontpage_footer_template = ""
@@ -155,14 +156,28 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 		# We set the response status code to 200 (OK)
 		self.set_HTTP_headers(200)
 		# We should do some real HTML here
-		html_reponse = "<html><head><title>Basic Skeleton</title></head><body>This is the basic HTML content when receiving a GET</body></html>"
-		#In practice, go over the entries list, 
+		board_frontpage_header_template = self.get_file_content("server/board_frontpage_header_template.html")
+		#boardcontents_template = self.get_file_content("server/boardcontents_template.html")
+		#html_reponse = "<html><head><title>Basic Skeleton</title></head><body>This is the basic HTML content when receiving a GET</body></html>"
+		html_reponse = board_frontpage_header_template
+		#In practice, go over the entries list,
 		#produce the boardcontents part, 
 		#then construct the full page by combining all the parts ...
 		
 		self.wfile.write(html_reponse)
+
 #------------------------------------------------------------------------------------------------------
-	# we might want some other functions
+#------------------------------------------------------------------------------------------------------
+#
+#------------------------------------------------------------------------------------------------------
+	#return the content of a given file
+	def get_file_content(self,filename):
+		file = codecs.open(filename,'r',"utf-8")
+		file_content=file.read()
+		print file_content
+		return file_content
+
+
 #------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------
 # Request handling - POST
