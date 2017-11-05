@@ -154,7 +154,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
     #------------------------------------------------------------------------------------------------------
     def do_GET_Index(self):
         # We use the global variables here so we need to recall them here
-        global board_frontpage_footer_template,board_frontpage_header_template
+        global board_frontpage_footer_template, board_frontpage_header_template
         global boardcontents_template, entry_template
 
         # We set the response status code to 200 (OK)
@@ -175,9 +175,11 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         # and fill the variables in this file
         boardcontents_template = self.get_file_content('server/boardcontents_template.html') % ("Board @",entry_template)
 
+        # get the content of the footer file
+        board_frontpage_footer_template = self.get_file_content('server/board_frontpage_footer_template.html')
 
         #html_reponse = "<html><head><title>Basic Skeleton</title></head><body>This is the basic HTML content when receiving a GET</body></html>"
-        html_reponse = board_frontpage_header_template + boardcontents_template
+        html_reponse = board_frontpage_header_template + boardcontents_template + board_frontpage_footer_template
 
 
         self.wfile.write(html_reponse)
