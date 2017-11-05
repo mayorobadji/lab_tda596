@@ -42,7 +42,7 @@ class BlackboardServer(HTTPServer):
         # we create the dictionary of values
         self.store = {}
         # We keep a variable of the next id to insert
-        self.current_key = -1
+        self.current_key = 0
         # our own ID (IP is 10.1.0.ID)
         self.vessel_id = vessel_id
         # The list of other vessels
@@ -51,7 +51,8 @@ class BlackboardServer(HTTPServer):
     # We add a value received to the store
     def add_value_to_store(self, value):
         # We add the value to the store
-        pass
+        self.store[self.current_key] = value
+        self.current_key += 1
     #------------------------------------------------------------------------------------------------------
     # We modify a value received in the store
     def modify_value_in_store(self,key,value):
@@ -165,10 +166,14 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
         # check if there is any entry in the server store
         if len(self.server.store) != 0:
+            entry_template = ""
             prefix = "entries/"
             # create a form for each entry and concatenate the forms in entry_template
             for id,entry in self.server.store.items():
-                action = prefix+id
+                # construct the form action with the prefix and the id of the entry
+                # useful when modifying or deleting this entry
+                action = prefix+str(id)
+
                 entry_template += self.get_file_content('server/entry_template.html') % (action, id, entry)
 
         # get the content of the boardcontents file
@@ -202,6 +207,18 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
     #------------------------------------------------------------------------------------------------------
     def do_POST(self):
         print("Receiving a POST on %s" % self.path)
+
+        # a POST on /entries means an addition of a new entry
+        if self.path == "/entries":
+            # parse the body of the POST
+            post_body = self.parse_POST_request()
+            # in post_body we have a dict {'entry': "new_entry_value"}
+            # add the new value to the store
+            self.server.add_value_to_store(post_body["entry"])
+
+            # return the appropriate headers to the client
+            self.set_HTTP_headers(200)
+
         # Here, we should check which path was requested and call the right logic based on it
         # We should also parse the data received
         # and set the headers for the client
