@@ -153,16 +153,32 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
     # GET logic - specific path
     #------------------------------------------------------------------------------------------------------
     def do_GET_Index(self):
+        # We use the global variables here so we need to recall them here
+        global board_frontpage_footer_template,board_frontpage_header_template
+        global boardcontents_template, entry_template
+
         # We set the response status code to 200 (OK)
         self.set_HTTP_headers(200)
-        # We should do some real HTML here
+
+        # get the content of the header file
         board_frontpage_header_template = self.get_file_content('server/board_frontpage_header_template.html')
-        boardcontents_template = self.get_file_content('server/boardcontents_template.html') % ("title","entries")
+
+        # check if there is any entry in the server store
+        if len(self.server.store) != 0:
+            prefix = "entries/"
+            # create a form for each entry and concatenate the forms in entry_template
+            for id,entry in self.server.store.items():
+                action = prefix+id
+                entry_template += self.get_file_content('server/entry_template.html') % (action, id, entry)
+
+        # get the content of the boardcontents file
+        # and fill the variables in this file
+        boardcontents_template = self.get_file_content('server/boardcontents_template.html') % ("Board @",entry_template)
+
+
         #html_reponse = "<html><head><title>Basic Skeleton</title></head><body>This is the basic HTML content when receiving a GET</body></html>"
         html_reponse = board_frontpage_header_template + boardcontents_template
-        #In practice, go over the entries list,
-        #produce the boardcontents part,
-        #then construct the full page by combining all the parts ...
+
 
         self.wfile.write(html_reponse)
 
@@ -178,34 +194,33 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         file_content = file.read()
         return file_content
 
-
     #------------------------------------------------------------------------------------------------------
     #------------------------------------------------------------------------------------------------------
     # Request handling - POST
     #------------------------------------------------------------------------------------------------------
-def do_POST(self):
-    print("Receiving a POST on %s" % self.path)
-    # Here, we should check which path was requested and call the right logic based on it
-    # We should also parse the data received
-    # and set the headers for the client
+    def do_POST(self):
+        print("Receiving a POST on %s" % self.path)
+        # Here, we should check which path was requested and call the right logic based on it
+        # We should also parse the data received
+        # and set the headers for the client
 
-    # If we want to retransmit what we received to the other vessels
-    retransmit = False # Like this, we will just create infinite loops!
-    if retransmit:
-        # do_POST send the message only when the function finishes
-        # We must then create threads if we want to do some heavy computation
-        #
-        # Random content
-        thread = Thread(target=self.server.propagate_value_to_vessels,args=("action", "key", "value") )
-        # We kill the process if we kill the server
-        thread.daemon = True
-        # We start the thread
-        thread.start()
+        # If we want to retransmit what we received to the other vessels
+        retransmit = False # Like this, we will just create infinite loops!
+        if retransmit:
+            # do_POST send the message only when the function finishes
+            # We must then create threads if we want to do some heavy computation
+            #
+            # Random content
+            thread = Thread(target=self.server.propagate_value_to_vessels,args=("action", "key", "value") )
+            # We kill the process if we kill the server
+            thread.daemon = True
+            # We start the thread
+            thread.start()
+        #------------------------------------------------------------------------------------------------------
+        # POST Logic
+        #------------------------------------------------------------------------------------------------------
+        # We might want some functions here as well
     #------------------------------------------------------------------------------------------------------
-    # POST Logic
-    #------------------------------------------------------------------------------------------------------
-    # We might want some functions here as well
-#------------------------------------------------------------------------------------------------------
 
 
 
