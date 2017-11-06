@@ -42,7 +42,7 @@ class BlackboardServer(HTTPServer):
         # we create the dictionary of values
         self.store = {}
         # We keep a variable of the next id to insert
-        self.current_key = 0
+        self.current_key = -1
         # our own ID (IP is 10.1.0.ID)
         self.vessel_id = vessel_id
         # The list of other vessels
@@ -243,6 +243,9 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
             # a POST on /entries/%d means an modification or a suppression
             # of a new entry
+            elif self.path[:9] == "/entries/":
+                print "x"
+
 
 
         # return the appropriate headers
