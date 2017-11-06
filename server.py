@@ -244,7 +244,13 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             # a POST on /entries/%d means an modification or a suppression
             # of a new entry
             elif self.path[:9] == "/entries/":
-                print "x"
+                # Get the id
+                entry_key = self.path[9:]
+                # check whether it's a modify or a delete
+                if post_body["delete"][0] == "0":
+                    # there the entry in post_body["entry"] is modified
+                    action = "modify"
+                    self.server.modify_value_in_store(entry_key,post_body["entry"][0])
 
 
 
@@ -278,6 +284,10 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         if action[0] == "add":
             val = value[0][2:-2]
             self.server.add_value_to_store(val)
+            status = True
+        elif action[0] == "modify":
+            val = value[0][2:-2]
+            self.server.modify_value_in_store(key,val)
             status = True
 
         return status
