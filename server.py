@@ -58,12 +58,13 @@ class BlackboardServer(HTTPServer):
     # We modify a value received in the store
     def modify_value_in_store(self,key,value):
         # we modify a value in the store if it exists
-        result_modify = false
+        result_modify = False
+        key = int(key)
         # We test if the value exists
-        if key in self.store: #The key exist
+        if key in self.store: # The key exists
             self.store[key] = value
-            result_modify = true
-        else: #THe key does not exist
+            result_modify = True
+        else: # The key does not exist
             print "Internal error: Modify"
 
         return result_modify
@@ -72,14 +73,17 @@ class BlackboardServer(HTTPServer):
     # We delete a value received from the store
     def delete_value_in_store(self,key):
         # we delete a value in the store if it exists
-        result_delete = false
+        result_delete = False
+        key = int(key)
         # We test if the value exists
-        if key in self.store:  # The key exist
+        if key in self.store:  # The key exists
             del self.store[key]
-            result_delete = true
+            result_delete = True
 
-        else:  # THe key does not exist
-            print "Internal error: Delete"
+        else:  # The key does not exist
+            print " Internal error: Delete"
+
+        print self.store
 
         return result_delete
     #------------------------------------------------------------------------------------------------------
@@ -186,6 +190,9 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         # check if there is any entry in the server store
         if len(self.server.store) != 0:
             entry_template = self.get_entry_forms()
+        else:
+            entry_template = ""
+
 
         # get the content of the boardcontents file
         # and fill the variables in this file
@@ -237,6 +244,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         post_body = self.parse_POST_request()
         propagate = False
         action = ""
+        error = False
 
         # if 'action' is a key of post_body
         # then it's a POST request from another vessel
@@ -269,8 +277,11 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
                     # there the entry in post_body["entry"] is modified
                     action = "modify"
                     self.server.modify_value_in_store(entry_key,post_body["entry"][0])
-
-
+                elif post_body["delete"][0] == "1":
+                    # there the entry in post_body["entry"] must be deleted
+                    action = "delete"
+                    print entry_key
+                    self.server.delete_value_in_store(entry_key)
 
         # return the appropriate headers
         self.set_HTTP_headers()
@@ -298,14 +309,18 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
     """
     def handle_post_from_vessel(self, action, key, value):
         status = False
+        # concrete formatting
+        value = value[0][2:-2]
+        key = key[0]
         # if it's an addition, add it to the store
         if action[0] == "add":
-            val = value[0][2:-2]
-            self.server.add_value_to_store(val)
+            self.server.add_value_to_store(value)
             status = True
         elif action[0] == "modify":
-            val = value[0][2:-2]
-            self.server.modify_value_in_store(key,val)
+            self.server.modify_value_in_store(key,value)
+            status = True
+        elif action[0] == "delete":
+            self.server.delete_value_in_store(key)
             status = True
 
         return status
