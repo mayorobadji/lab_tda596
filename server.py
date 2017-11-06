@@ -58,12 +58,30 @@ class BlackboardServer(HTTPServer):
     # We modify a value received in the store
     def modify_value_in_store(self,key,value):
         # we modify a value in the store if it exists
-        pass
+        result_modify = false
+        # We test if the value exists
+        if key in self.store: #The key exist
+            self.store[key] = value
+            result_modify = true
+        else: #THe key does not exist
+            print "Internal error: Modify"
+
+        return result_modify
+
     #------------------------------------------------------------------------------------------------------
     # We delete a value received from the store
     def delete_value_in_store(self,key):
         # we delete a value in the store if it exists
-        pass
+        result_delete = false
+        # We test if the value exists
+        if key in self.store:  # The key exist
+            del self.store[key]
+            result_delete = true
+
+        else:  # THe key does not exist
+            print "Internal error: Delete"
+
+        return result_delete
     #------------------------------------------------------------------------------------------------------
     # Contact a specific vessel with a set of variables to transmit to it
     def contact_vessel(self, vessel_ip, path, action, key, value):
