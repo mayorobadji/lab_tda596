@@ -51,8 +51,9 @@ class BlackboardServer(HTTPServer):
     # We add a value received to the store
     def add_value_to_store(self, value):
         # We add the value to the store
-        self.store[self.current_key] = value
         self.current_key += 1
+        self.store[self.current_key] = value
+        return self.current_key
     #------------------------------------------------------------------------------------------------------
     # We modify a value received in the store
     def modify_value_in_store(self,key,value):
@@ -76,7 +77,7 @@ class BlackboardServer(HTTPServer):
         try:
             # We contact vessel:PORT_NUMBER since we all use the same port
             # We can set a timeout, after which the connection fails if nothing happened
-            connection = HTTPConnection("%s:%d" % (vessel, PORT_NUMBER), timeout = 30)
+            connection = HTTPConnection("%s:%d" % (vessel_ip, PORT_NUMBER), timeout = 30)
             # We only use POST to send data (PUT and DELETE not supported)
             action_type = "POST"
             # We send the HTTP request
@@ -90,7 +91,7 @@ class BlackboardServer(HTTPServer):
                 success = True
         # We catch every possible exceptions
         except Exception as e:
-            print "Error while contacting %s" % vessel
+            print "Error while contacting %s" % vessel_ip
             # printing the error given by Python
             print(e)
 
@@ -119,7 +120,7 @@ class BlackboardServer(HTTPServer):
 # This class implements the logic when a server receives a GET or POST request
 # It can access to the server data through self.server.*
 # i.e. the store is accessible through self.server.store
-# Attributes of the server are SHARED accross all request hqndling/ threads!
+# Attributes of the server are SHARED accross all request handling/ threads!
 class BlackboardRequestHandler(BaseHTTPRequestHandler):
     #------------------------------------------------------------------------------------------------------
     # We fill the HTTP headers
@@ -166,15 +167,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
         # check if there is any entry in the server store
         if len(self.server.store) != 0:
-            entry_template = ""
-            prefix = "entries/"
-            # create a form for each entry and concatenate the forms in entry_template
-            for id,entry in self.server.store.items():
-                # construct the form action with the prefix and the id of the entry
-                # useful when modifying or deleting this entry
-                action = prefix+str(id)
-
-                entry_template += self.get_file_content('server/entry_template.html') % (action, id, entry)
+            entry_template = self.get_entry_forms()
 
         # get the content of the boardcontents file
         # and fill the variables in this file
@@ -201,36 +194,68 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         file_content = file.read()
         return file_content
 
+    """ This function creates an html form for each entry in the form
+            @return file_content : the content of filename in a string object
+    """
+    def get_entry_forms(self):
+        entry_forms = ""
+        prefix = "entries/"
+        # create a form for each entry found in store
+        # and concatenate the forms in entry_form
+        for id, entry in self.server.store.items():
+            # construct the form action with the prefix and the id of the entry
+            # useful when modifying or deleting this entry
+            action = prefix + str(id)
+            entry_forms += self.get_file_content('server/entry_template.html') % (action, id, entry)
+
+        return entry_forms
     #------------------------------------------------------------------------------------------------------
     #------------------------------------------------------------------------------------------------------
     # Request handling - POST
     #------------------------------------------------------------------------------------------------------
     def do_POST(self):
         print("Receiving a POST on %s" % self.path)
+        # parse the body of the POST
+        post_body = self.parse_POST_request()
+        propagate = False
+        action = ""
 
-        # a POST on /entries means an addition of a new entry
-        if self.path == "/entries":
-            # parse the body of the POST
-            post_body = self.parse_POST_request()
-            # in post_body we have a dict {'entry': "new_entry_value"}
-            # add the new value to the store
-            self.server.add_value_to_store(post_body["entry"])
+        # if 'action' is a key of post_body
+        # then it's a POST request from another vessel
+        if 'action' in post_body :
+            success = self.handle_post_from_vessel(post_body['action'],post_body['key'],post_body['value'])
+            if success :
+                self.set_HTTP_headers(200)
 
-            # return the appropriate headers to the client
-            self.set_HTTP_headers(200)
+        # no 'action' key in post_body means that
+        # it's a POST request from a client browser
+        else:
+            # this request must be propagated to the others vessels
+            propagate = True
 
-        # Here, we should check which path was requested and call the right logic based on it
-        # We should also parse the data received
-        # and set the headers for the client
+            # a POST on /entries means an addition of a new entry
+            if self.path == "/entries":
+                action = "add"
+                # add the new value to the store
+                # and store the key for this entry
+                entry_key = self.server.add_value_to_store(post_body["entry"][0])
+
+
+            # a POST on /entries/%d means an modification or a suppression
+            # of a new entry
+
+
+        # return the appropriate headers
+        self.set_HTTP_headers()
 
         # If we want to retransmit what we received to the other vessels
-        retransmit = False # Like this, we will just create infinite loops!
-        if retransmit:
+        # Like this, we will just create infinite loops!
+        if propagate:
             # do_POST send the message only when the function finishes
             # We must then create threads if we want to do some heavy computation
             #
             # Random content
-            thread = Thread(target=self.server.propagate_value_to_vessels,args=("action", "key", "value") )
+            thread = Thread(target=self.server.propagate_value_to_vessels,args=(self.path,action, entry_key, post_body["entry"]) )
             # We kill the process if we kill the server
             thread.daemon = True
             # We start the thread
@@ -238,11 +263,21 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         #------------------------------------------------------------------------------------------------------
         # POST Logic
         #------------------------------------------------------------------------------------------------------
-        # We might want some functions here as well
-    #------------------------------------------------------------------------------------------------------
+    """ This function handles a POST request received from another vessel (propagation)
+            @param action        : the action propagated (add/modify/delete)
+            @param key           : the key of the entry to add/delete/modify
+            @param value         : the value of the entry to add/delete/modify
+            @return status       : boolean which indicates if everything is ok
+    """
+    def handle_post_from_vessel(self, action, key, value):
+        status = False
+        # if it's an addition, add it to the store
+        if action[0] == "add":
+            val = value[0][2:-2]
+            self.server.add_value_to_store(val)
+            status = True
 
-
-
+        return status
 
 
 #------------------------------------------------------------------------------------------------------
