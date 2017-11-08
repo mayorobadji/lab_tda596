@@ -56,34 +56,33 @@ class BlackboardServer(HTTPServer):
         return self.current_key
     #------------------------------------------------------------------------------------------------------
     # We modify a value received in the store
+    # return True if the modification succeed, False otherwise
     def modify_value_in_store(self,key,value):
-        # we modify a value in the store if it exists
-        result_modify = False
+        result_modify = True
+        # here key is a str
         key = int(key)
-        # We test if the value exists
+        # We test if the key exists in the store
         if key in self.store: # The key exists
             self.store[key] = value
-            result_modify = True
         else: # The key does not exist
             print "Internal error: Modify"
+            result_modify = False
 
         return result_modify
 
     #------------------------------------------------------------------------------------------------------
     # We delete a value received from the store
+    # return True if the suppression succeed, False otherwise
     def delete_value_in_store(self,key):
         # we delete a value in the store if it exists
-        result_delete = False
+        result_delete = True
         key = int(key)
         # We test if the value exists
         if key in self.store:  # The key exists
             del self.store[key]
-            result_delete = True
-
         else:  # The key does not exist
             print " Internal error: Delete"
-
-        print self.store
+            result_delete = False
 
         return result_delete
     #------------------------------------------------------------------------------------------------------
@@ -124,11 +123,11 @@ class BlackboardServer(HTTPServer):
     def propagate_value_to_vessels(self, path, action, key, value):
         # We iterate through the vessel list
         for vessel in self.vessels:
+            success_contact = False
             # We should not send it to our own IP, or we would create an infinite loop of updates
             if vessel != ("10.1.0.%s" % self.vessel_id):
-                # A good practice would be to try again if the request failed
-                # Here, we do it only once
-                self.contact_vessel(vessel, path, action, key, value)
+                while not success_contact:
+                    success_contact = self.contact_vessel(vessel, path, action, key, value)
 #------------------------------------------------------------------------------------------------------
 
 
@@ -177,7 +176,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
     # GET logic - specific path
     #------------------------------------------------------------------------------------------------------
     def do_GET_Index(self):
-        # We use the global variables here so we need to recall them here
+        # We use the global variables here so we need to recall them
         global board_frontpage_footer_template, board_frontpage_header_template
         global boardcontents_template, entry_template
 
@@ -188,22 +187,24 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         board_frontpage_header_template = self.get_file_content('server/board_frontpage_header_template.html')
 
         # check if there is any entry in the server store
-        if len(self.server.store) != 0:
+        if len(self.server.store) > 0:
+            # if there is at least one, fill the entries' forms
             entry_template = self.get_entry_forms()
         else:
+            # otherwise reset the entry_template !! very important
             entry_template = ""
 
 
         # get the content of the boardcontents file
         # and fill the variables in this file
-        boardcontents_template = self.get_file_content('server/boardcontents_template.html') % ("Board @",entry_template)
+        board_info = "Board @ 10.1.0." + str(self.server.vessel_id)
+        boardcontents_template = self.get_file_content('server/boardcontents_template.html') % (board_info,entry_template)
 
         # get the content of the footer file
         board_frontpage_footer_template = self.get_file_content('server/board_frontpage_footer_template.html')
 
-        #html_reponse = "<html><head><title>Basic Skeleton</title></head><body>This is the basic HTML content when receiving a GET</body></html>"
+        # format the html response
         html_reponse = board_frontpage_header_template + boardcontents_template + board_frontpage_footer_template
-
 
         self.wfile.write(html_reponse)
 
@@ -249,24 +250,24 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         # if 'action' is a key of post_body
         # then it's a POST request from another vessel
         if 'action' in post_body :
-            success = self.handle_post_from_vessel(post_body['action'],post_body['key'],post_body['value'])
-            if success :
-                self.set_HTTP_headers(200)
-
+            # handle the propagated request
+            # and control if any occurs
+            if not self.handle_post_from_vessel(post_body['action'],post_body['key'],post_body['value']):
+                error = True
         # no 'action' key in post_body means that
         # it's a POST request from a client browser
         else:
             # this request must be propagated to the others vessels
             propagate = True
+            # get the entry
+            post_entry = post_body["entry"][0]
 
             # a POST on /entries means an addition of a new entry
             if self.path == "/entries":
                 action = "add"
                 # add the new value to the store
                 # and store the key for this entry
-                entry_key = self.server.add_value_to_store(post_body["entry"][0])
-
-
+                entry_key = self.server.add_value_to_store(post_entry)
             # a POST on /entries/%d means an modification or a suppression
             # of a new entry
             elif self.path[:9] == "/entries/":
@@ -274,17 +275,22 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
                 entry_key = self.path[9:]
                 # check whether it's a modify or a delete
                 if post_body["delete"][0] == "0":
-                    # there the entry in post_body["entry"] is modified
+                    # there the entry in post_entry is modified
                     action = "modify"
-                    self.server.modify_value_in_store(entry_key,post_body["entry"][0])
+                    if not self.server.modify_value_in_store(entry_key,post_entry):
+                        error = True
                 elif post_body["delete"][0] == "1":
-                    # there the entry in post_body["entry"] must be deleted
+                    # there the entry in post_entry must be deleted
                     action = "delete"
-                    print entry_key
-                    self.server.delete_value_in_store(entry_key)
+                    if not self.server.delete_value_in_store(entry_key):
+                        error = True
 
         # return the appropriate headers
-        self.set_HTTP_headers()
+        if not error :
+            self.set_HTTP_headers()
+        #TODO: Personnalize the errors messages
+        else:
+            self.set_HTTP_headers(404)
 
         # If we want to retransmit what we received to the other vessels
         # Like this, we will just create infinite loops!
@@ -301,6 +307,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         #------------------------------------------------------------------------------------------------------
         # POST Logic
         #------------------------------------------------------------------------------------------------------
+
     """ This function handles a POST request received from another vessel (propagation)
             @param action        : the action propagated (add/modify/delete)
             @param key           : the key of the entry to add/delete/modify
@@ -317,12 +324,9 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             self.server.add_value_to_store(value)
             status = True
         elif action[0] == "modify":
-            self.server.modify_value_in_store(key,value)
-            status = True
+            status = self.server.modify_value_in_store(key,value)
         elif action[0] == "delete":
-            self.server.delete_value_in_store(key)
-            status = True
-
+            status = self.server.delete_value_in_store(key)
         return status
 
 
