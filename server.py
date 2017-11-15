@@ -111,13 +111,12 @@ class BlackboardServer(HTTPServer):
     """
 
     def start_elect(self):
+
         # the election message
         value = []
         # generate a random time the vessel will wait for
         wait = randint(1, 5)
-        print wait
         time.sleep(wait)
-        print "up"
 
         # check if an election has started
         #TODO: drop the 2nd condition
@@ -128,9 +127,10 @@ class BlackboardServer(HTTPServer):
             key = self.get_neighbour(self.vessel_id)
             # fill the other fields
             action = 'elect'
-            path = 'elect'
+            path = 'elect/started'
             # propagate the message to your neighbour
             self.propagate_value_to_vessels(path, action, key, value, False)
+            print "\n -------------------------- Starting of the election process\n\n"
 
     """ This function handles an election message received from 
         another vessel
@@ -142,11 +142,10 @@ class BlackboardServer(HTTPServer):
             self.elect_started = True
         # if your id is in e_msg
         # then your election message has made it through the ring
-        #if e_msg[0] == str(self.vessel_id):
+        #if e_msg[0] == str(self.ves1sel_id):
         if str(self.vessel_id) == e_msg[0].replace("\'",""):
-            print("You made the turn bro")
-            # it's time to elect a leader
-            pass
+            print "%s is in the selection" % self.vessel_id
+            self.select_leader(e_msg)
         else: # otherwise add yourself and propagate
 
             val.extend(e_msg)
@@ -155,10 +154,44 @@ class BlackboardServer(HTTPServer):
             key = self.get_neighbour(self.vessel_id)
             # fill the other fields
             action = 'elect'
-            path = 'elect'
-            time.sleep(1)
+            path = 'elect/received'
             # propagate
             self.propagate_value_to_vessels(path,action,key,val,False)
+
+    """ This function chooses the leader once the election message is completed
+    """
+    def select_leader(self, e_msg):
+        value = []
+        # set the leader boolean
+        self.lead_found = True
+        # set the leader id flag
+        # here the leader is the one with the max host address
+        self.lead_id = max(e_msg,key=int)
+        # now propagate
+        value.append(self.lead_id)
+        key = self.get_neighbour(self.vessel_id)
+        # fill the other fields
+        action = 'lead'
+        path = 'lead/selected'
+        # propagate the message to your neighbour
+        self.propagate_value_to_vessels(path, action, key, value, False)
+
+    """ This function confirms the new leader specified in the leader message
+    """
+    def confirm_leader(self,e_msg):
+        # check the leader's flag
+        if not self.lead_found:
+            self.lead_found = True
+            self.lead_id = e_msg[0]
+            # propagate
+            key = self.get_neighbour(self.vessel_id)
+            # fill the other fields
+            action = 'lead'
+            path = 'lead/confirm'
+            # propagate the message to your neighbour
+            self.propagate_value_to_vessels(path, action, key, e_msg, False)
+        print "\n\nOur leader is 10.1.0.%s" % (self.lead_id)
+        print "\n -------------------------- End of the election process\n\n"
     #------------------------------------------------------------------------------------------------------
     # Contact a specific vessel with a set of variables to transmit to it
     def contact_vessel(self, vessel_ip, path, action, key, value):
@@ -281,7 +314,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         boardcontents_template = self.get_file_content('server/boardcontents_template.html') % (board_info,entry_template)
 
         # get the content of the footer file
-        board_frontpage_footer_template = self.get_file_content('server/board_frontpage_footer_template.html')
+        board_frontpage_footer_template = self.get_file_content('server/board_frontpage_footer_template.html') % ("10.1.0.%s" % (self.server.lead_id))
 
         # format the html response
         html_reponse = board_frontpage_header_template + boardcontents_template + board_frontpage_footer_template
@@ -408,8 +441,11 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         # it can also be a leader election message
         elif action[0] == 'elect':
             # return the headers now
-            self.set_HTTP_headers(200)
+            self.set_HTTP_headers()
             self.server.handle_elect(value)
+        elif action[0] == "lead":
+            self.set_HTTP_headers()
+            self.server.confirm_leader(value)
         return status
 
     """ This function returns a proper format of a post request body
@@ -418,7 +454,6 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
     """
     def handle_formatting(self, value):
         list = []
-        print "len = 2 ou +"
         for v in value:
             #v = v.replace('\"', '+')
             v = v.replace('[','')
