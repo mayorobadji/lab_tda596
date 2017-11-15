@@ -106,59 +106,52 @@ class BlackboardServer(HTTPServer):
         else:
             return str(vessel_id + 1)
 
-    """ This function starts the leader election process
+    """ Starts the leader election process
         PS: executed as a Thread
     """
-
     def start_elect(self):
 
         # the election message
         value = []
         # generate a random time the vessel will wait for
+        # before starting an election process
+        print "\n -------------------------- Starting the election process\n\n"
         wait = randint(1, 5)
         time.sleep(wait)
 
-        # check if an election has started
-        #TODO: drop the 2nd condition
+        # check if an election has already started
         if not self.elect_started:
             # append your id to the election message
             value.append(str(self.vessel_id))
-            # get your neighbour address
-            key = self.get_neighbour(self.vessel_id)
-            # fill the other fields
-            action = 'elect'
-            path = 'elect/started'
+            # append the path, the action and the key in fields
+            fields = self.fill_fields("elect/started", "elect", self.get_neighbour(self.vessel_id))
             # propagate the message to your neighbour
-            self.propagate_value_to_vessels(path, action, key, value, False)
-            print "\n -------------------------- Starting of the election process\n\n"
+            self.propagate_value_to_vessels(fields[0], fields[1],fields[2], value, False)
 
-    """ This function handles an election message received from 
+    """ Handles an election message received from 
         another vessel
     """
     def handle_elect(self, e_msg):
-        val = []
+        value = []
         # we need to set the elect_started flag only once
         if not self.elect_started:
             self.elect_started = True
-        # if your id is in e_msg
+        # if your id is the first element of e_msg
         # then your election message has made it through the ring
-        #if e_msg[0] == str(self.ves1sel_id):
+        # str(self.vessel_id) = "1" and e_msg[0] = "'1'"
         if str(self.vessel_id) == e_msg[0].replace("\'",""):
-            print "%s is in the selection" % self.vessel_id
+            # select the leader
             self.select_leader(e_msg)
-        else: # otherwise add yourself and propagate
-
-            val.extend(e_msg)
-            val.append(str(self.vessel_id))
+        else: # otherwise add yourself to e_msg and propagate
+            e_msg.append(str(self.vessel_id))
             # get your neighbour address
-            key = self.get_neighbour(self.vessel_id)
-            # fill the other fields
-            action = 'elect'
-            path = 'elect/received'
+            # append the path, the action and the key in fields
+            fields = self.fill_fields("elect/received", "elect", self.get_neighbour(self.vessel_id))
             # propagate
-            self.propagate_value_to_vessels(path,action,key,val,False)
+            self.propagate_value_to_vessels(fields[0],fields[1],fields[2],e_msg,False)
 
-    """ This function chooses the leader once the election message is completed
+    """ Chooses the leader once the vessel's election message 
+        has reached all the nodes in the ring
     """
     def select_leader(self, e_msg):
         value = []
@@ -169,29 +162,35 @@ class BlackboardServer(HTTPServer):
         self.lead_id = max(e_msg,key=int)
         # now propagate
         value.append(self.lead_id)
-        key = self.get_neighbour(self.vessel_id)
-        # fill the other fields
-        action = 'lead'
-        path = 'lead/selected'
-        # propagate the message to your neighbour
-        self.propagate_value_to_vessels(path, action, key, value, False)
+        # append the path, the action and the key in fields
+        fields = self.fill_fields("lead/selected", "lead", self.get_neighbour(self.vessel_id))
+        # propagate
+        self.propagate_value_to_vessels(fields[0], fields[1], fields[2], value, False)
 
-    """ This function confirms the new leader specified in the leader message
+    """ Confirms the new leader specified in a leader message
+        received from another vessel
     """
     def confirm_leader(self,e_msg):
         # check the leader's flag
         if not self.lead_found:
             self.lead_found = True
             self.lead_id = e_msg[0]
+            # append the path, the action and the key in fields
+            fields = self.fill_fields("lead/confirmed", "lead", self.get_neighbour(self.vessel_id))
             # propagate
-            key = self.get_neighbour(self.vessel_id)
-            # fill the other fields
-            action = 'lead'
-            path = 'lead/confirm'
-            # propagate the message to your neighbour
-            self.propagate_value_to_vessels(path, action, key, e_msg, False)
+            self.propagate_value_to_vessels(fields[0], fields[1], fields[2], e_msg, False)
+
         print "\n\nOur leader is 10.1.0.%s" % (self.lead_id)
-        print "\n -------------------------- End of the election process\n\n"
+        print "\n -------------------------- Ending the election process\n\n"
+
+    """ This is a toolbox function """
+    def fill_fields(self,path,action,key):
+        fields = []
+        fields.append(path)
+        fields.append(action)
+        fields.append(key)
+        return fields
+
     #------------------------------------------------------------------------------------------------------
     # Contact a specific vessel with a set of variables to transmit to it
     def contact_vessel(self, vessel_ip, path, action, key, value):
