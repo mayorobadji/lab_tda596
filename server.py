@@ -102,7 +102,7 @@ class BlackboardServer(HTTPServer):
         # if the vessel is the last element of the list
         # then it's neighbour is the first element
         if str(vessel_id) == self.vessels[-1][7:]:
-            return "1"
+            return '1'
         else:
             return str(vessel_id + 1)
 
@@ -115,20 +115,50 @@ class BlackboardServer(HTTPServer):
         value = []
         # generate a random time the vessel will wait for
         wait = randint(1, 5)
+        print wait
         time.sleep(wait)
+        print "up"
 
         # check if an election has started
+        #TODO: drop the 2nd condition
         if not self.elect_started:
             # append your id to the election message
             value.append(str(self.vessel_id))
             # get your neighbour address
             key = self.get_neighbour(self.vessel_id)
             # fill the other fields
-            action = "elect"
-            path = "/elect"
+            action = 'elect'
+            path = 'elect'
             # propagate the message to your neighbour
             self.propagate_value_to_vessels(path, action, key, value, False)
 
+    """ This function handles an election message received from 
+        another vessel
+    """
+    def handle_elect(self, e_msg):
+        val = []
+        # we need to set the elect_started flag only once
+        if not self.elect_started:
+            self.elect_started = True
+        # if your id is in e_msg
+        # then your election message has made it through the ring
+        #if e_msg[0] == str(self.vessel_id):
+        if str(self.vessel_id) == e_msg[0].replace("\'",""):
+            print("You made the turn bro")
+            # it's time to elect a leader
+            pass
+        else: # otherwise add yourself and propagate
+
+            val.extend(e_msg)
+            val.append(str(self.vessel_id))
+            # get your neighbour address
+            key = self.get_neighbour(self.vessel_id)
+            # fill the other fields
+            action = 'elect'
+            path = 'elect'
+            time.sleep(1)
+            # propagate
+            self.propagate_value_to_vessels(path,action,key,val,False)
     #------------------------------------------------------------------------------------------------------
     # Contact a specific vessel with a set of variables to transmit to it
     def contact_vessel(self, vessel_ip, path, action, key, value):
@@ -294,7 +324,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         # parse the body of the POST
         post_body = self.parse_POST_request()
         propagate = False
-        action = ""
+        action = ''
         error = False
 
         # if 'action' is a key of post_body
@@ -365,21 +395,39 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             @return status       : boolean which indicates if everything is ok
     """
     def handle_post_from_vessel(self, action, key, value):
-        status = False
+        status = True
         # concrete formatting
-        value = value[0][2:-2]
-        key = key[0]
+        value = self.handle_formatting(value)
         # if it's an addition, add it to the store
-        if action[0] == "add":
-            self.server.add_value_to_store(value)
-            status = True
-        elif action[0] == "modify":
-            status = self.server.modify_value_in_store(key,value)
-        elif action[0] == "delete":
-            status = self.server.delete_value_in_store(key)
+        if action[0] == 'add':
+            self.server.add_value_to_store(value[0])
+        elif action[0] == 'modify':
+            status = self.server.modify_value_in_store(key[0],value[0])
+        elif action[0] == 'delete':
+            status = self.server.delete_value_in_store(key[0])
+        # it can also be a leader election message
+        elif action[0] == 'elect':
+            # return the headers now
+            self.set_HTTP_headers(200)
+            self.server.handle_elect(value)
         return status
 
-
+    """ This function returns a proper format of a post request body
+        old format : [['a'],['b'],['c']]
+        new format : ['a','b','c']
+    """
+    def handle_formatting(self, value):
+        list = []
+        print "len = 2 ou +"
+        for v in value:
+            #v = v.replace('\"', '+')
+            v = v.replace('[','')
+            v = v.replace(']','')
+            v = v.replace("\'","")
+            v = v.replace(" ", "")
+            list.append(v)
+        value = list[0].split(',')
+        return value
 #------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------
 # Execute the code
