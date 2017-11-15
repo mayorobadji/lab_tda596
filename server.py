@@ -9,8 +9,10 @@
 # We import various libraries
 import sys  # Retrieve arguments
 import codecs
+import time
 from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler  # Socket specifically designed to handle HTTP requests
 from httplib import HTTPConnection  # Create a HTTP connection, as a client (for POST requests to the other vessels)
+from random import randint
 from threading import Thread  # Thread Management
 from urllib import urlencode  # Encode POST content into the HTTP header
 from urlparse import parse_qs  # Parse POST data
@@ -36,6 +38,7 @@ PORT_NUMBER = 80
 #------------------------------------------------------------------------------------------------------
 class BlackboardServer(HTTPServer):
     #------------------------------------------------------------------------------------------------------
+    # 3 variables added here : elect_started, lead_found, lead_id
     def __init__(self, server_address, handler, node_id, vessel_list):
         # We call the super init
         HTTPServer.__init__(self,server_address, handler)
@@ -47,6 +50,12 @@ class BlackboardServer(HTTPServer):
         self.vessel_id = vessel_id
         # The list of other vessels
         self.vessels = vessel_list
+        # check whether an election has started or not
+        self.elect_started = False
+        # check whether a leader has been found or not
+        self.lead_found = False
+        # the leader id
+        self.lead_id = None
     #------------------------------------------------------------------------------------------------------
     # We add a value received to the store
     def add_value_to_store(self, value):
@@ -84,6 +93,42 @@ class BlackboardServer(HTTPServer):
             result_delete = False
 
         return result_delete
+
+    """ This function returns the next neighbour of a given vessel
+            (ring simulation)
+        """
+
+    def get_neighbour(self, vessel_id):
+        # if the vessel is the last element of the list
+        # then it's neighbour is the first element
+        if str(vessel_id) == self.vessels[-1][7:]:
+            return "1"
+        else:
+            return str(vessel_id + 1)
+
+    """ This function starts the leader election process
+        PS: executed as a Thread
+    """
+
+    def start_elect(self):
+        # the election message
+        value = []
+        # generate a random time the vessel will wait for
+        wait = randint(1, 5)
+        time.sleep(wait)
+
+        # check if an election has started
+        if not self.elect_started:
+            # append your id to the election message
+            value.append(str(self.vessel_id))
+            # get your neighbour address
+            key = self.get_neighbour(self.vessel_id)
+            # fill the other fields
+            action = "elect"
+            path = "/elect"
+            # propagate the message to your neighbour
+            self.propagate_value_to_vessels(path, action, key, value, False)
+
     #------------------------------------------------------------------------------------------------------
     # Contact a specific vessel with a set of variables to transmit to it
     def contact_vessel(self, vessel_ip, path, action, key, value):
@@ -119,14 +164,20 @@ class BlackboardServer(HTTPServer):
         return success
     #------------------------------------------------------------------------------------------------------
     # We send a received value to all the other vessels of the system
-    def propagate_value_to_vessels(self, path, action, key, value):
-        # We iterate through the vessel list
-        for vessel in self.vessels:
-            success_contact = False
-            # We should not send it to our own IP, or we would create an infinite loop of updates
-            if vessel != ("10.1.0.%s" % self.vessel_id):
-                while not success_contact:
-                    success_contact = self.contact_vessel(vessel, path, action, key, value)
+    # added broadcast variable to take unicast into account
+    def propagate_value_to_vessels(self, path, action, key, value, broadcast=True):
+        if broadcast:
+            # We iterate through the vessel list
+            for vessel in self.vessels:
+                success_contact = False
+                # We should not send it to our own IP, or we would create an infinite loop of updates
+                if vessel != ("10.1.0.%s" % self.vessel_id):
+                    while not success_contact:
+                        success_contact = self.contact_vessel(vessel, path, action, key, value)
+        else: # this is an unicast propagation
+            vessel = "10.1.0.%s" % (key)
+            success_contact = self.contact_vessel(vessel,path,action,key,value)
+
 #------------------------------------------------------------------------------------------------------
 
 
@@ -353,7 +404,10 @@ if __name__ == '__main__':
     server = BlackboardServer(('', PORT_NUMBER), BlackboardRequestHandler, vessel_id, vessel_list)
     print("Starting the server on port %d" % PORT_NUMBER)
 
+    thread = Thread(target=server.start_elect)
+
     try:
+        thread.start()
         server.serve_forever()
     except KeyboardInterrupt:
         server.server_close()
