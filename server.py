@@ -69,7 +69,6 @@ class BlackboardServer(HTTPServer):
             result_modify = False
 
         return result_modify
-
     #------------------------------------------------------------------------------------------------------
     # We delete a value received from the store
     # return True if the suppression succeed, False otherwise

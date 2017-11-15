@@ -12,7 +12,7 @@
 <!-- Inlined javascript code. This could be optionally hosted in another file on the server and included using 'src' attribute as above -->
 <script>
 
-var page_reload_timeout = 5; //in seconds
+var page_reload_timeout = 10; //in seconds
 var page_reload_count = 0;
 
 function update_contents(){
@@ -58,6 +58,7 @@ $(document).ready(function () {
 .entryform {
     margin: 2px 0px 0px 0px;      
     color: blue;
+    width: 100%;
 }
 
 #clock_placeholder {
@@ -81,12 +82,23 @@ footer {
 #boardcontents_placeholder {
     margin: 10px 0px 0px 0px;      
     border: 1px dotted green;
+    width: 100%;
 }
-
+#boardcontents_placeholder input {
+    width: 30%;
+}
+#boardcontents_placeholder button {
+    width: 10%;
+}
 #boardtitle_placeholder {
     font-size: 125%;
-    font-weight: bold; 
+    font-weight: bold;
+    width: 100%;
 }
+#board_form_placeholder input {
+    width: 45%;
+}
+
 </style>
     <title>Distributed board - TDA596 (Chalmers)</title>
 </head>
@@ -103,10 +115,10 @@ footer {
     <iframe name="noreload-form-target" width="90%" height="50" src="about:blank" frameborder="0" scrolling="yes" resizable seamless></iframe>
 
     <!-- This place shows the text box used to enter data to the blackboard by posting a request to the server -->
-    <div id="board_form_placeholder">
+    <div id="board_form_placeholder" width="100%">
         <h3>Submit to board</h3>
         <form id="usrform" target="noreload-form-target">
-            <input type="text" name="entry" size="100%" autofocus required />
+            <input type="text" name="entry" autofocus required />
             <input type="submit" formmethod="post" formaction="entries" value="Submit to board"/>
         </form>
     </div>
