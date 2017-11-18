@@ -1,245 +1,182 @@
-# coding=utf-8
-#------------------------------------------------------------------------------------------------------
+# HEADERS --------------------------------
+# coding = utf-8
 # TDA596 Labs - Server Skeleton
 # server/server.py
 # Input: Node_ID total_number_of_ID
-# Student Group: G4
+# Student Group: G 4
 # Student names: Mayoro BADJI & Diarra TALL
-#------------------------------------------------------------------------------------------------------
-# We import various libraries
-import sys  # Retrieve arguments
+# -----------------------------------------
+#TODO: improve the leader election --> election msgs with priorities
+#TODO: in do_GET() --> wait for the leader to be found before responding
+
+# import the libraries
 import codecs
-import time
 import json
-import ast
-import cgi
-from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler  # Socket specifically designed to handle HTTP requests
-from httplib import HTTPConnection  # Create a HTTP connection, as a client (for POST requests to the other vessels)
+import sys
+import time
+# Socket specifically designed to handle HTTP requests
+from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
+# Create a HTTP connection, as a client
+from httplib import HTTPConnection
 from random import randint
 from threading import Thread  # Thread Management
-from urllib import urlencode  # Encode POST content into the HTTP header
+# Encode POST content into the HTTP header
+# from urllib import urlencode
 from urlparse import parse_qs  # Parse POST data
 
-#------------------------------------------------------------------------------------------------------
-
-
 # Global variables for HTML templates
-board_frontpage_footer_template = ""
-board_frontpage_header_template = ""
-boardcontents_template = ""
-entry_template = ""
+board_frontpage_footer_template = ''
+board_frontpage_header_template = ''
+boardcontents_template = ''
+entry_template = ''
 
-#------------------------------------------------------------------------------------------------------
-# Static variables definitions
+# Static variable definition
 PORT_NUMBER = 80
-#------------------------------------------------------------------------------------------------------
 
 
+""" Main class for the vessels
 
+This class represents a vessel
+It contains the main actions a vessel can perform
 
-#------------------------------------------------------------------------------------------------------
-#------------------------------------------------------------------------------------------------------
+"""
 class BlackboardServer(HTTPServer):
-    #------------------------------------------------------------------------------------------------------
-    # 3 variables added here : elect_started, lead_found, lead_id
+
     def __init__(self, server_address, handler, node_id, vessel_list):
-        # We call the super init
+        """ Vessel constructor
+
+        :param server_address: IP address of the vessel
+        :param handler: HTTP events handler
+        :param node_id: id of the vessel (host address in the IP address)
+        :param vessel_list: list of the other vessels
+        """
+
         HTTPServer.__init__(self,server_address, handler)
-        # we create the dictionary of values
+        # create the dictionary of values
         self.store = {}
-        # We keep a variable of the next id to insert
+        # store the next id to insert
         self.current_key = -1
-        # our own ID (IP is 10.1.0.ID)
+        # server_address = 10.1.0.vessel_id
         self.vessel_id = vessel_id
-        # The list of other vessels
         self.vessels = vessel_list
-        # check whether an election has started or not
+        # check if the vessel has received an election message
         self.elect_started = False
         # check whether a leader has been found or not
         self.lead_found = False
         # the leader id
         self.lead_id = None
-    #------------------------------------------------------------------------------------------------------
-    # We add a value received to the store
+
+    # -------------------------------- Store Functions ----------------------
+
     def add_value_to_store(self, value, key=None):
-        # We add the value to the store
-        if key is not None:
+        """ Add a new value to the store
+
+        :param value: the value to add
+        :param key: optional key in the dictionary for value
+        :return: the new key inserted
+        """
+
+        if key is not None: # to maintain consistency
+            # when the add comes from a leader for example
+            # the key in both dictionnaries should be the same
             self.current_key = int(key)
         else:
             self.current_key += 1
+
+        # add the current value to the store
         self.store[self.current_key] = value
         return self.current_key
-    #------------------------------------------------------------------------------------------------------
-    # We modify a value received in the store
-    # return True if the modification succeed, False otherwise
-    def modify_value_in_store(self,key,value):
-        result_modify = True
-        # here key is a str
-        key = int(key)
-        # We test if the key exists in the store
-        if key in self.store: # The key exists
-            self.store[key] = value
-        else: # The key does not exist
-            print "Internal error: Modify"
-            result_modify = False
 
-        return result_modify
-    #------------------------------------------------------------------------------------------------------
-    # We delete a value received from the store
-    # return True if the suppression succeed, False otherwise
     def delete_value_in_store(self,key):
-        # we delete a value in the store if it exists
-        result_delete = True
-        key = int(key)
-        # We test if the value exists
-        if key in self.store:  # The key exists
+        """ Delete an entry in the store
+
+        :param key: the key of the entry to delete
+        :return: True if the suppression succeeds, False otherwise
+        """
+        # check if the value exists
+        if key in self.store:
             del self.store[key]
-        else:  # The key does not exist
-            print " Internal error: Delete"
-            result_delete = False
-
-        return result_delete
-
-    """ This function returns the next neighbour of a given vessel
-            (ring simulation)
-    """
-    def get_neighbour(self, vessel_id):
-        # if the vessel is the last element of the list
-        # then it's neighbour is the first element
-        if str(vessel_id) == self.vessels[-1][7:]:
-            return '1'
+            return True
         else:
-            return str(vessel_id + 1)
+            print " Delete error: %d doesn't exist in store" % (key)
 
-    """ Starts the leader election process
-        PS: executed as a Thread
-    """
-    def start_elect(self):
-        # generate a random time the vessel will wait for
-        # before starting an election process
-        print "\n -------------------------- Starting the election process\n\n"
-        wait = randint(1, 5)
-        time.sleep(wait)
+        return False
 
-        # check if an election has already started
-        if not self.elect_started:
-            # append your id to the election message
-            value = str(self.vessel_id)
-            # append the path, the action and the key in fields
-            fields = self.fill_fields("/elect/", "elect", self.get_neighbour(self.vessel_id))
-            # propagate the message to your neighbour
-            self.propagate_value_to_vessels(fields[0], fields[1],"", value, False,fields[2])
+    def modify_value_in_store(self,key,value):
+        """ Modify the value of an entry in the store
 
-    """ Handles an election message received from 
-        another vessel
-    """
-    def handle_elect(self, e_msg):
+        :param key: the key of the value being modified
+        :param value: the new value to add
+        :return: True if the modification succeeds, False otherwise
+        """
 
-        value = []
-        # we need to set the elect_started flag only once
-        if not self.elect_started:
-            self.elect_started = True
-        # if your id is the first element of e_msg
-        # then your election message has made it through the ring
-        # str(self.vessel_id) = "1" and e_msg[0] = "'1'"
-        if str(self.vessel_id) == e_msg[0]:
-            # select the leader
-            self.select_leader(e_msg)
-        else: # otherwise add yourself to e_msg and propagate
-            if type(e_msg) == list:
-                value.extend(e_msg)
-            else:
-                value.append(e_msg)
-            value.append(str(self.vessel_id))
-            # get your neighbour address
-            # append the path, the action and the key in fields
-            fields = self.fill_fields("/elect/", "elect", self.get_neighbour(self.vessel_id))
-            # propagate
-            self.propagate_value_to_vessels(fields[0],fields[1],"",value,False,fields[2])
-
-    """ Chooses the leader once the vessel's election message 
-        has reached all the nodes in the ring
-    """
-    def select_leader(self, e_msg):
-        value = []
-        # set the leader boolean
-        self.lead_found = True
-        # set the leader id flag
-        # here the leader is the one with the max host address
-        self.lead_id = max(e_msg,key=int)
-        # now propagate
-        value.append(self.lead_id)
-        # append the path, the action and the key in fields
-        fields = self.fill_fields("/lead/", "lead", self.get_neighbour(self.vessel_id))
-        # propagate
-        self.propagate_value_to_vessels(fields[0], fields[1], "", value, False,fields[2])
-
-    """ Confirms the new leader specified in a leader message
-        received from another vessel
-    """
-    def confirm_leader(self,e_msg):
-        # check the leader's flag
-        if not self.lead_found:
-            self.lead_found = True
-            self.lead_id = e_msg[0]
-            # append the path, the action and the key in fields
-            fields = self.fill_fields("/lead/", "lead", self.get_neighbour(self.vessel_id))
-            # propagate
-            self.propagate_value_to_vessels(fields[0], fields[1], "", e_msg, False,fields[2])
-
-        if self.lead_id == str(self.vessel_id):
-            print "\n\nI am the leader"
+        # check if the key exists
+        if key in self.store:
+            # modify the value
+            self.store[key] = value
+            return True
         else:
-            print "\n\nOur leader is 10.1.0.%s" % (self.lead_id)
-        print "\n -------------------------- Ending the election process\n\n"
+            print "Modify error: %d doesn't exist in the store" % (key)
 
-    """ This is a toolbox function """
-    def fill_fields(self,path,action,receiver):
-        fields = []
-        fields.append(path)
-        fields.append(action)
-        fields.append(receiver)
-        return fields
+        return False
 
-    #------------------------------------------------------------------------------------------------------
-    # Contact a specific vessel with a set of variables to transmit to it
+    # -------------------------------- Communication Functions --------------
+
     def contact_vessel(self, vessel_ip, path, action, key, value):
-        # the Boolean variable we will return
+        """ Contact a vessel with a set of fields to transmit to it
+
+        :param vessel_ip: the ip of the vessel to contact
+        :param path: the path of the request
+        :param action: the action to perform on value
+        :param key: the key of value
+        :param value: the value itself
+        :return: True if everything goes well, False otherwise
+        """
+
         success = False
-        # The variables must be encoded in the URL format, through urllib.urlencode
-        #post_content = urlencode({'action': action, 'key': key, 'value': value})
+        # encode the fields in a json format
         post_content = json.dumps({'action': action, 'key': key, 'value': value})
-        # the HTTP header must contain the type of data we are transmitting, here URL encoded
-        #headers = {"Content-type": "application/x-www-form-urlencoded"}
+        # format the HTTP headers with the type of data being transported
         headers = {"Content-type": "application/json"}
-        # We should try to catch errors when contacting the vessel
+
         try:
-            # We contact vessel:PORT_NUMBER since we all use the same port
-            # We can set a timeout, after which the connection fails if nothing happened
+            # contact vessel:PORT_NUMBER since they all use the same port
+            # set a timeout, after which the connection fails if nothing happened
             connection = HTTPConnection("%s:%d" % (vessel_ip, PORT_NUMBER), timeout = 30)
-            # We only use POST to send data (PUT and DELETE not supported)
+            # only POST used here
             action_type = "POST"
-            # We send the HTTP request
+            # send the HTTP request
             connection.request(action_type, path, post_content, headers)
-            # We retrieve the response
+            # retrieve the response
             response = connection.getresponse()
-            # We want to check the status, the body should be empty
+            # check the status
             status = response.status
-            # If we receive a HTTP 200 - OK
-            if status == 200:
+
+            if status == 200: # 200 OK
                 success = True
-        # We catch every possible exceptions
+        # catch every possible exceptions
         except Exception as e:
             print "Error while contacting %s" % vessel_ip
-            # printing the error given by Python
+            # print the error given by Python
             print(e)
 
-        # we return if we succeeded or not
         return success
-    #------------------------------------------------------------------------------------------------------
-    # We send a received value to all the other vessels of the system
-    # added broadcast variable to take unicast into account
-    def propagate_value_to_vessels(self, path, action, key, value, broadcast=True, receiver=None):
+
+    def propagate_value_to_vessels(self, path, action, key, value,
+                                broadcast=True, receiver=None):
+        """ Send unicast/broadcast information to one/all the vessel(s)
+
+        :param path: the path of the request
+        :param action: the action to perform on value
+        :param key: the key of value
+        :param value: the value itself
+        :param broadcast: broadcast or unicast
+        :param receiver: the id of the receiver in the case of unicast
+        :return: True if everything goes well, False otherwise
+        """
+
+        #TODO: after x attempts, just drop it
+
         if broadcast:
             # We iterate through the vessel list
             for vessel in self.vessels:
@@ -247,124 +184,367 @@ class BlackboardServer(HTTPServer):
                 # We should not send it to our own IP, or we would create an infinite loop of updates
                 if vessel != ("10.1.0.%s" % self.vessel_id):
                     while not success_contact:
-                        success_contact = self.contact_vessel(vessel, path, action, key, value)
+                        success_contact = self.contact_vessel(vessel, path,
+                                                              action, key,
+                                                              value)
         else: # this is an unicast propagation
             vessel = "10.1.0.%s" % (receiver)
-            self.contact_vessel(vessel,path,action,key,value)
-#------------------------------------------------------------------------------------------------------
+            success_contact = self.contact_vessel(vessel,path,action,key,
+                                                  value)
 
+        return success_contact
 
+    # -------------------------------- Toolbox Functions --------------------
 
+    def fill_post_fields(self,path,action,receiver):
+        """ Fill the fields of a post request to another vessel
 
+        :param path: the path of the request
+        :param action: the action to perform
+        :param receiver: the id of the receiving vessel
+        :return: a list of the fields filled
+        """
 
+        fields = []
+        fields.append(path)
+        fields.append(action)
+        fields.append(receiver)
+        return fields
 
+    def get_neighbour(self, vessel_id):
+        """ Get the next neighbour of a vessel in a virtual ring
 
-#------------------------------------------------------------------------------------------------------
-#------------------------------------------------------------------------------------------------------
-# This class implements the logic when a server receives a GET or POST request
-# It can access to the server data through self.server.*
-# i.e. the store is accessible through self.server.store
-# Attributes of the server are SHARED accross all request handling/ threads!
-class BlackboardRequestHandler(BaseHTTPRequestHandler):
-    #------------------------------------------------------------------------------------------------------
-    # We fill the HTTP headers
-    def set_HTTP_headers(self, status_code = 200):
-        # We set the response status code (200 if OK, something else otherwise)
-        self.send_response(status_code)
-        # We set the content type to HTML
-        self.send_header("Content-type","text/html")
-        # No more important headers, we can close them
-        self.end_headers()
-    #------------------------------------------------------------------------------------------------------
-    # a POST request must be parsed through urlparse.parse_QS, since the content is URL encoded
-    def parse_POST_request(self, json_parse=True):
-        post_data = ""
-        # We need to parse the response, so we must know the length of the content
-        length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(length)
-        # we can now parse the content using parse_qs
-        if not json_parse:
-            post_data = parse_qs(post_data,keep_blank_values=1)
-        # we return the data
-        return post_data
-    #------------------------------------------------------------------------------------------------------
-    #------------------------------------------------------------------------------------------------------
-    # Request handling - GET
-    #------------------------------------------------------------------------------------------------------
-    # This function contains the logic executed when this server receives a GET request
-    # This function is called AUTOMATICALLY upon reception and is executed as a thread!
-    def do_GET(self):
-        print("Receiving a GET on path %s" % self.path)
-        # Here, we should check which path was requested and call the right logic based on it
-        self.do_GET_Index()
-    #------------------------------------------------------------------------------------------------------
-    # GET logic - specific path
-    #------------------------------------------------------------------------------------------------------
-    def do_GET_Index(self):
-        # We use the global variables here so we need to recall them
-        global board_frontpage_footer_template, board_frontpage_header_template
-        global boardcontents_template, entry_template
+        :param vessel_id: the vessel_id of x
+        :return: the vessel_id of the neighbour of x
+        """
 
-        # We set the response status code to 200 (OK)
-        self.set_HTTP_headers(200)
-
-        # get the content of the header file
-        board_frontpage_header_template = self.get_file_content('server/board_frontpage_header_template.html')
-
-        # check if there is any entry in the server store
-        if len(self.server.store) > 0:
-            # if there is at least one, fill the entries' forms
-            entry_template = self.get_entry_forms()
+        vessel_ip = '10.1.0.%d' %(vessel_id)
+        # checks if it's the last vessel of the list
+        if vessel_ip == self.vessels[-1]:
+            return '1' # its neighbour is the first vessel
         else:
-            # otherwise reset the entry_template !! very important
-            entry_template = ""
+            return str(vessel_id + 1)
 
 
-        # get the content of the boardcontents file
-        # and fill the variables in this file
-        board_info = "Board @ 10.1.0." + str(self.server.vessel_id)
-        boardcontents_template = self.get_file_content('server/boardcontents_template.html') % (board_info,entry_template)
+    # -------------------------------- Election Functions -------------------
+    def start_elect(self):
+        """ Start the election process -- create and send an election message
 
-        # get the content of the footer file
-        board_frontpage_footer_template = self.get_file_content('server/board_frontpage_footer_template.html') % ("10.1.0.%s" % (self.server.lead_id))
+        :return: Nothing
+        """
 
-        # format the html response
-        html_reponse = board_frontpage_header_template + boardcontents_template + board_frontpage_footer_template
+        print "\n -------------------------- Starting the election process\n\n"
+        # generate a random time the vessel will backoff
+        # before starting an election process
+        wait = randint(1, 5)
+        time.sleep(wait)
 
-        self.wfile.write(html_reponse)
+        # check if an election has already started
+        # means that the vessel receives an election message
+        if not self.elect_started:
+            # append your id to the election message
+            value = str(self.vessel_id)
+            # fill the POST request fields
+            fields = self.fill_post_fields("/elect/", "elect", self.get_neighbour(self.vessel_id))
+            # propagate the message to your neighbour fields[2]
+            self.propagate_value_to_vessels(fields[0], fields[1],"", value, False,fields[2])
 
-    #------------------------------------------------------------------------------------------------------
-    """ This function returns the content of a simple file
-        @param filename      : the path of the file
-        @return file_content : the content of filename in a string object
-    """
+    def handle_elect(self, e_msg):
+        """ Handles the reception of an election message
+
+        :param e_msg: the election message received
+        :return: Nothing
+        """
+
+        value = []
+        # set the election started flag only once
+        if not self.elect_started:
+            self.elect_started = True
+
+        # if the first element of the election message
+        # corresponds to the current vessel_id
+        # then it means that e_msg has reached all the nodes
+        if str(self.vessel_id) == e_msg[0]:
+            # a leader should then be selected
+            self.select_leader(e_msg)
+        # otherwise, the vesself adds itself to e_msg
+        else:
+            # e_msg can be a list (more than 1 element)
+            if type(e_msg) == list: value.extend(e_msg)
+            # or a string
+            else:   value.append(e_msg)
+
+            # the vessel adds itself
+            value.append(str(self.vessel_id))
+
+            # fill the post fields
+            fields = self.fill_post_fields("/elect/", "elect", self.get_neighbour(self.vessel_id))
+
+            # and propagate to its neighbour fields[2]
+            self.propagate_value_to_vessels(fields[0],fields[1],"",value,False,fields[2])
+
+    def select_leader(self, e_msg):
+        """ Select the leader onces e_msg has reached all the nodes
+
+        :param e_msg: the election message
+        :return: Nothing
+        """
+
+        value = []
+        # set the leader found boolean and the leader id
+        self.lead_found = True
+        # the leader is the vessel with the max host address
+        self.lead_id = max(e_msg,key=int)
+
+        # create the confirmation message
+        value.append(self.lead_id)
+
+        # fill the POST fields
+        fields = self.fill_post_fields("/lead/", "lead",
+                                  self.get_neighbour(self.vessel_id))
+        # propagate to its neighbour
+        self.propagate_value_to_vessels(fields[0], fields[1], "", value,
+                                        False,fields[2])
+
+    def confirm_leader(self,c_msg):
+        """ Handles the reception of an confirmation message
+
+        :param c_msg: the confirmation message
+        :return: Nothing
+        """
+
+        # check the leader's flag
+        if not self.lead_found:
+            self.lead_found = True
+            self.lead_id = c_msg[0]
+
+            # fill the POST fields
+            fields = self.fill_post_fields("/lead/",
+                                           "lead",
+                                           self.get_neighbour(self.vessel_id))
+            # propagate to its neighbour
+            self.propagate_value_to_vessels(fields[0], fields[1], "",
+                                            c_msg, False,fields[2])
+
+        if self.lead_id == str(self.vessel_id):
+            print "\n\nI am the leader"
+        else:
+            print "\n\nOur leader is 10.1.0.%s" % (self.lead_id)
+        print "\n -------------------------- Ending the election process\n\n"
+
+
+""" HTTP Handler class
+
+This class handles the requests received (GET, POST)
+The server attributes are accessible through self.server.*
+Attributes of the server are SHARED accross all request handling/ threads!
+
+"""
+class BlackboardRequestHandler(BaseHTTPRequestHandler):
+
+    # -------------------------------- Common Functions ----------------------
+
+    def set_HTTP_headers(self, status_code = 200):
+        """ Format an HTTP response
+
+        :param status_code: the status code of the response
+        :return: Nothing
+        """
+
+        # set the response status code
+        self.send_response(status_code)
+        # set the content type to HTML
+        self.send_header("Content-type","text/html")
+        # close the headers
+        self.end_headers()
+
+    # -------------------------------- GET Logic Functions -------------------
+
     def get_file_content(self,filename):
+        """ Return the content of a file
+
+        :param filename: the path of the file to read
+        :return file_content: the content of the file
+        """
+
         # open the file
         file = codecs.open(filename,'r',"utf-8")
-        # read the content of filename
+        # read and return the content of filename
         file_content = file.read()
+
         return file_content
 
-    """ This function creates an html form for each entry in the form
-            @return file_content : the content of filename in a string object
-    """
     def get_entry_forms(self):
+        """ Create a form for each entry in the store
+
+        :return entry_forms: the forms
+        """
+
         entry_forms = ""
         prefix = "entries/"
+
         # create a form for each entry found in store
         # and concatenate the forms in entry_form
         for id, entry in self.server.store.items():
             # construct the form action with the prefix and the id of the entry
             # useful when modifying or deleting this entry
             action = prefix + str(id)
-            entry_forms += self.get_file_content('server/entry_template.html') % (action, id, entry)
+            entry_forms += self.get_file_content('server/entry_template.html')\
+                           % (action, id, entry)
 
         return entry_forms
-    #------------------------------------------------------------------------------------------------------
-    #------------------------------------------------------------------------------------------------------
-    # Request handling - POST
-    #------------------------------------------------------------------------------------------------------
+
+    def do_GET(self):
+        """ Executed automatically upon a GET request reception
+
+        :return: Nothing
+        """
+
+        print("GET request received on path %s" % self.path)
+        self.do_GET_Index()
+
+    def do_GET_Index(self):
+        """ Return an HTML page upon a GET request
+
+        :return: Nothing
+        """
+
+        # recall the global variables
+        global board_frontpage_footer_template, entry_template
+        global boardcontents_template, board_frontpage_header_template
+
+        # We set the response status code to 200 (OK)
+        self.set_HTTP_headers(200)
+
+        # get the content of the header file
+        board_frontpage_header_template = self.get_file_content\
+            ('server/board_frontpage_header_template.html')
+
+        # check if there is any entry in the server store
+        if len(self.server.store) > 0:
+            # if there is at least one, fill the entries' forms
+            entry_template = self.get_entry_forms()
+        else:
+            # otherwise reset the entry_template
+            entry_template = ""
+
+
+        # get the content of the boardcontents file
+        # and fill the variables in this file
+        board_info = "Board @ 10.1.0." + str(self.server.vessel_id)
+        boardcontents_template = self.get_file_content\
+                                     ('server/boardcontents_template.html') \
+                                 % (board_info,entry_template)
+
+        # get the content of the footer file
+        board_frontpage_footer_template = self.get_file_content\
+                            ('server/board_frontpage_footer_template.html') \
+                                % ("10.1.0.%s" % (self.server.lead_id))
+
+        # format the html response
+        html_reponse = board_frontpage_header_template + \
+                       boardcontents_template + \
+                       board_frontpage_footer_template
+
+        self.wfile.write(html_reponse)
+
+    # -------------------------------- POST Logic Functions ------------------
+
+    def parse_POST_request(self, json_parse=True):
+        """ Parse a POST request received from a browser or a vessel
+
+        :param json_parse: if the data is json-encoded or url-encoded
+        :return post_data: the post content
+        """
+
+        post_data = ""
+
+        # get the length of the content
+        length = int(self.headers['Content-Length'])
+        # read the content
+        post_data = self.rfile.read(length)
+
+        # if the data is not json-encoded
+        if not json_parse: # it's url-encoded then
+            # so it should be parse with parse_qs
+            post_data = parse_qs(post_data,keep_blank_values=1)
+
+        return post_data
+
+    def handle_post_from_vessel(self, action, key, value, from_leader=True):
+        """ Handle a POST request received from a vessel -- propagation
+
+        :param action: the action to perform on the propagated value
+        :param key: the key of the propagated value
+        :param value: the propagated value itself
+        :param from_leader: whether the post comes from a leader or not
+        :return status: None if something goes wrong or an integer
+        """
+
+        status = None
+
+        # if it's an addition, add it to the store
+        if action == 'add':
+            # it's coming from the leader
+            # so the key should be the same
+            # to ensure consistency
+            if from_leader:
+                status = self.server.add_value_to_store(value,key)
+            else:
+                status = self.server.add_value_to_store(value)
+        elif action == 'modify':
+            if not self.server.modify_value_in_store(int(key),value):
+                status = None
+        elif action == 'delete':
+            if not self.server.delete_value_in_store(int(key)):
+                status = None
+        # it can also be a leader election/confirm message
+        elif action == 'elect':
+            # return the headers now
+            self.set_HTTP_headers()
+            self.server.handle_elect(value)
+        elif action == "lead":
+            self.set_HTTP_headers()
+            self.server.confirm_leader(value)
+
+        if status is not None and action != "elect" and action != "lead":
+            # everything wen't well, an HTTP response should be sent
+            # in the election, the headers are sent automatically
+            self.set_HTTP_headers()
+
+        return status
+
+    def handle_post_from_browser(self,leader=True):
+        """
+
+        :param leader:
+        :return:
+        """
+
+
+    def handle_formatting(self, dict):
+        """ Return a proper format of a post request body after parsing
+
+        the old format may be : {key_1:["'val_1'"],key_2:["'val_2'"]}
+        the format returned will be : {key_1:"val_1",key_2:"val_2"}
+        :param dict:
+        :return:
+        """
+
+        dicto = {}
+        for k,v in dict.items():
+            v[0] = v[0].replace('[', '')
+            v[0] = v[0].replace(']', '')
+            v[0] = v[0].replace("\'", "")
+            dicto[k] = v[0]
+        return dicto
+
     def do_POST(self):
+        """ Executed automatically upon a POST request reception
+
+        :return:
+        """
+
         print("Receiving a POST on %s" % self.path)
         # parse the body of the POST
         propagate = False
@@ -412,10 +592,10 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         # www-urlencoded... --> POST request from a client browser
         elif self.headers["Content-type"] == "application/x-www-form-urlencoded":
 
-            # parse the content with parse_qs
-            post_body = self.parse_POST_request(False)
-            # get the entry
-            post_body = self.handle_formatting(post_body)
+            # parse the content with parse_qs and format it correctly
+            post_body = self.handle_formatting(self.parse_POST_request(False))
+
+
             post_entry = post_body["entry"]
 
             # POST on /entries --> addition of a new entry
@@ -449,9 +629,9 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
                 # this add request must be propagated to the others vessels
                 if self.server.lead_id == str(self.server.vessel_id):
                     propagate = True
-                    if action == "modify" and not self.server.modify_value_in_store(entry_key,post_entry):
+                    if action == "modify" and not self.server.modify_value_in_store(int(entry_key),post_entry):
                             error = True
-                    if action == "delete" and not self.server.delete_value_in_store(entry_key):
+                    if action == "delete" and not self.server.delete_value_in_store(int(entry_key)):
                         error = True
                 else:  # this request should be sent to the leader
                     if self.server.propagate_value_to_vessels(self.path,action,entry_key,post_body["entry"],False,self.server.lead_id):
@@ -473,70 +653,10 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         # POST Logic
         #------------------------------------------------------------------------------------------------------
 
-    """
-    """
-    def handle_post_from_leader(self):
-       pass
 
-    """
-    """
-    def send_post_to_leader(self):
-        pass
 
-    """
-    """
-    def send_post_to_vessels(self):
-        pass
 
-    """ This function handles a POST request received from another vessel (propagation)
-            @param action        : the action propagated (add/modify/delete)
-            @param key           : the key of the entry to add/delete/modify
-            @param value         : the value of the entry to add/delete/modify
-            @return status       : boolean which indicates if everything is ok
-    """
-    def handle_post_from_vessel(self, action, key, value, from_leader=True):
-        status = None
 
-        # if it's an addition, add it to the store
-        if action == 'add':
-            if from_leader:
-                status = self.server.add_value_to_store(value,key)
-            else:
-                status = self.server.add_value_to_store(value)
-        elif action == 'modify':
-            if not self.server.modify_value_in_store(key,value):
-                status = None
-        elif action == 'delete':
-            if not self.server.delete_value_in_store(key):
-                status = None
-        # it can also be a leader election message
-        elif action == 'elect':
-            # return the headers now
-            self.set_HTTP_headers()
-            self.server.handle_elect(value)
-        elif action == "lead":
-            self.set_HTTP_headers()
-            self.server.confirm_leader(value)
-
-        if status is not None and action != "elect" and action != "lead":
-            self.set_HTTP_headers()
-        return status
-
-    """ This function returns a proper format of a post request body
-         old format : [['a'],['b'],['c']]
-         new format : ['a','b','c']
-     """
-
-    def handle_formatting(self, dict):
-        dicto = {}
-        for k,v in dict.items():
-            # v = v.replace('\"', '+')
-            v[0] = v[0].replace('[', '')
-            v[0] = v[0].replace(']', '')
-            v[0] = v[0].replace("\'", "")
-            #v = v.replace(" ", "")
-            dicto[k] = v[0]
-        return dicto
 
 #------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------
