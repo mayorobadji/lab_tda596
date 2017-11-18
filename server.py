@@ -481,7 +481,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         :return status: None if something goes wrong or an integer
         """
 
-        status = None
+        status = 1
 
         # if it's an addition, add it to the store
         if action == 'add':
@@ -514,13 +514,56 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
         return status
 
-    def handle_post_from_browser(self,leader=True):
-        """
+    def handle_post_from_browser(self,path,post_body,leader=True):
+        """ Handles a POST request received from a browser
 
-        :param leader:
-        :return:
+        :param path: the path of the request
+        :param post_body: the body of the POST
+        :param leader: whether the server which receives the request is
+                        the leader or not
+        :return fields: a list -- [action, key] of the value in post_body
         """
+        fields = []
 
+        # it's an addition
+        if path == '/entries':
+            fields.append('add') # the action to be propagated
+
+            # the leader will add the new value to its store
+            if leader:
+                # store the new key
+                fields.append(self.server.add_value_to_store
+                                            (post_body['entry']))
+            # the leaded will send the post to the leader
+            else: fields.append('')
+
+        # it's a modification or a suppression
+        if '/entries/' in path:
+            # get the id : path = /entries/id
+            key = self.path[9:]
+
+            # check whether it's a modification or a suppression
+            if post_body['delete'][0] == "0":
+                # fill the POST request field
+                fields.append('modify')
+
+                # the leader will modify the value
+                if leader:
+                    if not self.server.modify_value_in_store(int(key),
+                                                      post_body['entry']):
+                        return None
+            else:
+                fields.append('delete')
+
+                # the leader will delete the value
+                if leader:
+                    if not self.server.delete_value_in_store(int(key)):
+                        return None
+
+            # add the key
+            fields.append(key)
+
+        return fields
 
     def handle_formatting(self, dict):
         """ Return a proper format of a post request body after parsing
@@ -542,15 +585,12 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         """ Executed automatically upon a POST request reception
 
-        :return:
+        :return: Nothing
         """
 
-        print("Receiving a POST on %s" % self.path)
-        # parse the body of the POST
+        print("POST request received on path %s" % self.path)
         propagate = False
         action = ''
-
-        # TODO: need to test if the leader was found
 
         # application / json --> POST request from a vessel
         if self.headers["Content-type"] == "application/json" :
@@ -559,7 +599,9 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             post_body = self.parse_POST_request()
             post_body = json.loads(post_body)
 
-            action, entry_key, post_entry = post_body["action"], post_body["key"], post_body["value"]
+            action, entry_key, post_entry = post_body["action"], \
+                                            post_body["key"], \
+                                            post_body["value"]
 
             # check if it's a regular POST or
             # a leader election POST
@@ -569,76 +611,68 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
                 if self.server.lead_id == str(self.server.vessel_id):
                     propagate = True
                     # handle the post
-                    handle_result = self.handle_post_from_vessel(action, entry_key, post_entry, False)
+                    handle_result = self.handle_post_from_vessel\
+                                        (action, entry_key,
+                                            post_entry, False)
                     if handle_result is None:
-                        self.set_HTTP_headers(400)
+                        self.set_HTTP_headers(404)
                     else:
                         if self.path == "/entries":
                             entry_key = handle_result
 
-                # regular POST originated by the leader
+                # regular POST originated by the leader to a vessel
                 else:
                     propagate = False
-                    if self.handle_post_from_vessel(action,entry_key,post_entry) is None:
-                        self.set_HTTP_headers(400)
+                    if self.handle_post_from_vessel(action,entry_key,
+                                                    post_entry) is None:
+                        self.set_HTTP_headers(404)
 
             # election POST
             else:
                 # handle the election request received
                 # and control if any error occurs
                 if not self.handle_post_from_vessel(action,entry_key,post_entry):
-                    self.set_HTTP_headers(400)
+                    self.set_HTTP_headers(500)
 
         # www-urlencoded... --> POST request from a client browser
-        elif self.headers["Content-type"] == "application/x-www-form-urlencoded":
+        elif self.headers["Content-type"] == \
+                "application/x-www-form-urlencoded":
 
             # parse the content with parse_qs and format it correctly
-            post_body = self.handle_formatting(self.parse_POST_request(False))
+            post_body = self.handle_formatting\
+                            (self.parse_POST_request(False))
+            # get the actual value
+            post_entry = post_body['entry']
 
+            # the POST was received by the leading server
+            if self.server.lead_id == str(self.server.vessel_id):
+                # a propagation will be needed
+                propagate = True
+                # handle the POST received
+                handle_post = self.handle_post_from_browser(self.path,
+                                                            post_body,True)
 
-            post_entry = post_body["entry"]
-
-            # POST on /entries --> addition of a new entry
-            if self.path == "/entries":
-                action = "add"
-
-                # if this vessel is the leader then
-                if self.server.lead_id == str(self.server.vessel_id):
-                    # add the new value to the store
-                    # and store the key for this entry
-                    entry_key = self.server.add_value_to_store(post_entry)
-                    # this add request must be propagated
-                    propagate = True
+                if handle_post is None: # something went wrong
+                    self.set_HTTP_headers(404)
+                else:
+                    # make the affectations
+                    action,entry_key = handle_post
                     self.set_HTTP_headers()
-                else:  # this request should be sent to the leader
-                    if not self.server.propagate_value_to_vessels(self.path,action,"x",post_body["entry"],False,self.server.lead_id):
-                        self.set_HTTP_headers(400)
-                    else:
-                        self.set_HTTP_headers()
+            # the POST was received by a leaded vessel
+            else:
+                handle_post = self.handle_post_from_browser(self.path,
+                                                            post_body, False)
 
-            # a POST on /entries/%d means an modification or a suppression
-            # of a new entry
-            elif self.path[:9] == "/entries/":
-                # Get the id
-                entry_key = self.path[9:]
-                # check whether it's a modify or a delete
-                if post_body["delete"][0] == "0":   action = "modify"
-                else:   action = "delete"
+                # send the request in unicast to the leader
+                if not self.server.propagate_value_to_vessels(self.path,
+                                                              handle_post[0],
+                                                              handle_post[1],
+                                                              post_entry, False,
+                                                              self.server.lead_id):
+                    self.set_HTTP_headers(500)
+                else:   self.set_HTTP_headers()
 
-                # if this vessel is the leader then
-                # this add request must be propagated to the others vessels
-                if self.server.lead_id == str(self.server.vessel_id):
-                    propagate = True
-                    if action == "modify" and not self.server.modify_value_in_store(int(entry_key),post_entry):
-                            error = True
-                    if action == "delete" and not self.server.delete_value_in_store(int(entry_key)):
-                        error = True
-                else:  # this request should be sent to the leader
-                    if self.server.propagate_value_to_vessels(self.path,action,entry_key,post_body["entry"],False,self.server.lead_id):
-                        pass
-
-        # If we want to retransmit what we received to the other vessels
-        # Like this, we will just create infinite loops!
+        # propagate to the other vessels
         if propagate:
             # do_POST send the message only when the function finishes
             # We must then create threads if we want to do some heavy computation
