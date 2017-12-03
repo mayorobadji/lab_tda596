@@ -59,29 +59,16 @@ class BlackboardServer(HTTPServer):
         # server_address = 10.1.0.vessel_id
         self.vessel_id = vessel_id
         self.vessels = vessel_list
-        # check if the vessel has received an election message
-        self.elect_started = False
-        # check whether a leader has been found or not
-        self.lead_found = False
-        # the leader id
-        self.lead_id = None
 
     # -------------------------------- Store Functions ----------------------
 
-    def add_value_to_store(self, value, key=None):
+    def add_value_to_store(self, value):
         """ Add a new value to the store
 
         :param value: the value to add
-        :param key: optional key in the dictionary for value
         :return: the new key inserted
         """
-
-        if key is not None: # to maintain consistency
-            # when the add comes from a leader for example
-            # the key in both dictionnaries should be the same
-            self.current_key = int(key)
-        else:
-            self.current_key += 1
+        self.current_key += 1
 
         # add the current value to the store
         self.store[self.current_key] = value
@@ -99,8 +86,7 @@ class BlackboardServer(HTTPServer):
             return True
         else:
             print " Delete error: %d doesn't exist in store" % (key)
-
-        return False
+            return False
 
     def modify_value_in_store(self,key,value):
         """ Modify the value of an entry in the store
@@ -117,8 +103,7 @@ class BlackboardServer(HTTPServer):
             return True
         else:
             print "Modify error: %d doesn't exist in the store" % (key)
-
-        return False
+            return False
 
     # -------------------------------- Communication Functions --------------
 
@@ -162,175 +147,26 @@ class BlackboardServer(HTTPServer):
 
         return success
 
-    def propagate_value_to_vessels(self, path, action, key, value,
-                                broadcast=True, receiver=None):
+    def propagate_value_to_vessels(self, path, action, key, value):
         """ Send unicast/broadcast information to one/all the vessel(s)
 
         :param path: the path of the request
         :param action: the action to perform on value
         :param key: the key of value
         :param value: the value itself
-        :param broadcast: broadcast or unicast
-        :param receiver: the id of the receiver in the case of unicast
-        :return: True if everything goes well, False otherwise
         """
 
         #TODO: after x attempts, just drop it
 
-        if broadcast:
-            # We iterate through the vessel list
-            for vessel in self.vessels:
-                success_contact = False
-                # We should not send it to our own IP, or we would create an infinite loop of updates
-                if vessel != ("10.1.0.%s" % self.vessel_id):
-                    while not success_contact:
-                        success_contact = self.contact_vessel(vessel, path,
+        # We iterate through the vessel list
+        for vessel in self.vessels:
+            success_contact = False
+            # We should not send it to our own IP, or we would create an infinite loop of updates
+            if vessel != ("10.1.0.%s" % self.vessel_id):
+                while not success_contact:
+                    success_contact = self.contact_vessel(vessel, path,
                                                               action, key,
                                                               value)
-        else: # this is an unicast propagation
-            vessel = "10.1.0.%s" % (receiver)
-            success_contact = self.contact_vessel(vessel,path,action,key,
-                                                  value)
-
-        return success_contact
-
-    # -------------------------------- Toolbox Functions --------------------
-
-    def fill_post_fields(self,path,action,receiver):
-        """ Fill the fields of a post request to another vessel
-
-        :param path: the path of the request
-        :param action: the action to perform
-        :param receiver: the id of the receiving vessel
-        :return: a list of the fields filled
-        """
-
-        fields = []
-        fields.append(path)
-        fields.append(action)
-        fields.append(receiver)
-        return fields
-
-    def get_neighbour(self, vessel_id):
-        """ Get the next neighbour of a vessel in a virtual ring
-
-        :param vessel_id: the vessel_id of x
-        :return: the vessel_id of the neighbour of x
-        """
-
-        vessel_ip = '10.1.0.%d' %(vessel_id)
-        # checks if it's the last vessel of the list
-        if vessel_ip == self.vessels[-1]:
-            return '1' # its neighbour is the first vessel
-        else:
-            return str(vessel_id + 1)
-
-
-    # -------------------------------- Election Functions -------------------
-    def start_elect(self):
-        """ Start the election process -- create and send an election message
-
-        :return: Nothing
-        """
-
-        print "\n -------------------------- Starting the election process\n\n"
-        # generate a random time the vessel will backoff
-        # before starting an election process
-        wait = randint(1, 5)
-        time.sleep(wait)
-
-        # check if an election has already started
-        # means that the vessel receives an election message
-        if not self.elect_started:
-            # append your id to the election message
-            value = str(self.vessel_id)
-            # fill the POST request fields
-            fields = self.fill_post_fields("/elect/", "elect", self.get_neighbour(self.vessel_id))
-            # propagate the message to your neighbour fields[2]
-            self.propagate_value_to_vessels(fields[0], fields[1],"", value, False,fields[2])
-
-    def handle_elect(self, e_msg):
-        """ Handles the reception of an election message
-
-        :param e_msg: the election message received
-        :return: Nothing
-        """
-
-        value = []
-        # set the election started flag only once
-        if not self.elect_started:
-            self.elect_started = True
-
-        # if the first element of the election message
-        # corresponds to the current vessel_id
-        # then it means that e_msg has reached all the nodes
-        if str(self.vessel_id) == e_msg[0]:
-            # a leader should then be selected
-            self.select_leader(e_msg)
-        # otherwise, the vesself adds itself to e_msg
-        else:
-            # e_msg can be a list (more than 1 element)
-            if type(e_msg) == list: value.extend(e_msg)
-            # or a string
-            else:   value.append(e_msg)
-
-            # the vessel adds itself
-            value.append(str(self.vessel_id))
-
-            # fill the post fields
-            fields = self.fill_post_fields("/elect/", "elect", self.get_neighbour(self.vessel_id))
-
-            # and propagate to its neighbour fields[2]
-            self.propagate_value_to_vessels(fields[0],fields[1],"",value,False,fields[2])
-
-    def select_leader(self, e_msg):
-        """ Select the leader onces e_msg has reached all the nodes
-
-        :param e_msg: the election message
-        :return: Nothing
-        """
-
-        value = []
-        # set the leader found boolean and the leader id
-        self.lead_found = True
-        # the leader is the vessel with the max host address
-        self.lead_id = max(e_msg,key=int)
-
-        # create the confirmation message
-        value.append(self.lead_id)
-
-        # fill the POST fields
-        fields = self.fill_post_fields("/lead/", "lead",
-                                  self.get_neighbour(self.vessel_id))
-        # propagate to its neighbour
-        self.propagate_value_to_vessels(fields[0], fields[1], "", value,
-                                        False,fields[2])
-
-    def confirm_leader(self,c_msg):
-        """ Handles the reception of an confirmation message
-
-        :param c_msg: the confirmation message
-        :return: Nothing
-        """
-
-        # check the leader's flag
-        if not self.lead_found:
-            self.lead_found = True
-            self.lead_id = c_msg[0]
-
-            # fill the POST fields
-            fields = self.fill_post_fields("/lead/",
-                                           "lead",
-                                           self.get_neighbour(self.vessel_id))
-            # propagate to its neighbour
-            self.propagate_value_to_vessels(fields[0], fields[1], "",
-                                            c_msg, False,fields[2])
-
-        if self.lead_id == str(self.vessel_id):
-            print "\n\nI am the leader"
-        else:
-            print "\n\nOur leader is 10.1.0.%s" % (self.lead_id)
-        print "\n -------------------------- Ending the election process\n\n"
 
 
 """ HTTP Handler class
@@ -438,8 +274,8 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
         # get the content of the footer file
         board_frontpage_footer_template = self.get_file_content\
-                            ('server/board_frontpage_footer_template.html') \
-                                % ("10.1.0.%s" % (self.server.lead_id))
+                            ('server/board_frontpage_footer_template.html')
+        #                     % ("10.1.0.%s" % (self.server.lead_id))
 
         # format the html response
         html_reponse = board_frontpage_header_template + \
@@ -471,13 +307,12 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
         return post_data
 
-    def handle_post_from_vessel(self, action, key, value, from_leader=True):
+    def handle_post_from_vessel(self, action, key, value):
         """ Handle a POST request received from a vessel -- propagation
 
         :param action: the action to perform on the propagated value
         :param key: the key of the propagated value
         :param value: the propagated value itself
-        :param from_leader: whether the post comes from a leader or not
         :return status: None if something goes wrong or an integer
         """
 
@@ -485,42 +320,25 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
         # if it's an addition, add it to the store
         if action == 'add':
-            # it's coming from the leader
-            # so the key should be the same
-            # to ensure consistency
-            if from_leader:
-                status = self.server.add_value_to_store(value,key)
-            else:
-                status = self.server.add_value_to_store(value)
-        elif action == 'modify':
+            status = self.server.add_value_to_store(value)
+        if action == 'modify':
             if not self.server.modify_value_in_store(int(key),value):
                 status = None
         elif action == 'delete':
             if not self.server.delete_value_in_store(int(key)):
                 status = None
-        # it can also be a leader election/confirm message
-        elif action == 'elect':
-            # return the headers now
-            self.set_HTTP_headers()
-            self.server.handle_elect(value)
-        elif action == "lead":
-            self.set_HTTP_headers()
-            self.server.confirm_leader(value)
 
-        if status is not None and action != "elect" and action != "lead":
+        if status is not None:
             # everything wen't well, an HTTP response should be sent
-            # in the election, the headers are sent automatically
             self.set_HTTP_headers()
 
         return status
 
-    def handle_post_from_browser(self,path,post_body,leader=True):
+    def handle_post_from_browser(self,path,post_body):
         """ Handles a POST request received from a browser
 
         :param path: the path of the request
         :param post_body: the body of the POST
-        :param leader: whether the server which receives the request is
-                        the leader or not
         :return fields: a list -- [action, key] of the value in post_body
         """
         fields = []
@@ -529,13 +347,10 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         if path == '/entries':
             fields.append('add') # the action to be propagated
 
-            # the leader will add the new value to its store
-            if leader:
-                # store the new key
-                fields.append(self.server.add_value_to_store
+            # add the value to the store
+            # and store the new key in fields
+            fields.append(self.server.add_value_to_store
                                             (post_body['entry']))
-            # the leaded will send the post to the leader
-            else: fields.append('')
 
         # it's a modification or a suppression
         if '/entries/' in path:
@@ -546,19 +361,15 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             if post_body['delete'][0] == "0":
                 # fill the POST request field
                 fields.append('modify')
-
-                # the leader will modify the value
-                if leader:
-                    if not self.server.modify_value_in_store(int(key),
+                # modify the new value
+                if not self.server.modify_value_in_store(int(key),
                                                       post_body['entry']):
-                        return None
+                    return None
             else:
                 fields.append('delete')
 
-                # the leader will delete the value
-                if leader:
-                    if not self.server.delete_value_in_store(int(key)):
-                        return None
+                if not self.server.delete_value_in_store(int(key)):
+                    return None
 
             # add the key
             fields.append(key)
@@ -594,6 +405,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
         # application / json --> POST request from a vessel
         if self.headers["Content-type"] == "application/json" :
+            propagate = False
 
             # read the content of the file
             post_body = self.parse_POST_request()
@@ -603,36 +415,13 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
                                             post_body["key"], \
                                             post_body["value"]
 
-            # check if it's a regular POST or
-            # a leader election POST
-            if self.path != "/elect/" and self.path != "/lead/":
-
-                # regular POST originated by a vessel to the leader
-                if self.server.lead_id == str(self.server.vessel_id):
-                    propagate = True
-                    # handle the post
-                    handle_result = self.handle_post_from_vessel\
+            # handle the post
+            handle_result = self.handle_post_from_vessel\
                                         (action, entry_key,
-                                            post_entry, False)
-                    if handle_result is None:
-                        self.set_HTTP_headers(404)
-                    else:
-                        if self.path == "/entries":
-                            entry_key = handle_result
+                                            post_entry)
 
-                # regular POST originated by the leader to a vessel
-                else:
-                    propagate = False
-                    if self.handle_post_from_vessel(action,entry_key,
-                                                    post_entry) is None:
-                        self.set_HTTP_headers(404)
-
-            # election POST
-            else:
-                # handle the election request received
-                # and control if any error occurs
-                if not self.handle_post_from_vessel(action,entry_key,post_entry):
-                    self.set_HTTP_headers(500)
+            if handle_result is None:
+                self.set_HTTP_headers(404)
 
         # www-urlencoded... --> POST request from a client browser
         elif self.headers["Content-type"] == \
@@ -644,33 +433,18 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             # get the actual value
             post_entry = post_body['entry']
 
-            # the POST was received by the leading server
-            if self.server.lead_id == str(self.server.vessel_id):
-                # a propagation will be needed
-                propagate = True
-                # handle the POST received
-                handle_post = self.handle_post_from_browser(self.path,
-                                                            post_body,True)
+            # a propagation will be needed
+            propagate = True
+            # handle the POST received
+            handle_post = self.handle_post_from_browser(self.path,
+                                                        post_body)
 
-                if handle_post is None: # something went wrong
-                    self.set_HTTP_headers(404)
-                else:
-                    # make the affectations
-                    action,entry_key = handle_post
-                    self.set_HTTP_headers()
-            # the POST was received by a leaded vessel
+            if handle_post is None: # something went wrong
+                self.set_HTTP_headers(404)
             else:
-                handle_post = self.handle_post_from_browser(self.path,
-                                                            post_body, False)
-
-                # send the request in unicast to the leader
-                if not self.server.propagate_value_to_vessels(self.path,
-                                                              handle_post[0],
-                                                              handle_post[1],
-                                                              post_entry, False,
-                                                              self.server.lead_id):
-                    self.set_HTTP_headers(500)
-                else:   self.set_HTTP_headers()
+                # make the affectations
+                action,entry_key = handle_post
+                self.set_HTTP_headers()
 
         # propagate to the other vessels
         if propagate:
@@ -716,10 +490,7 @@ if __name__ == '__main__':
     server = BlackboardServer(('', PORT_NUMBER), BlackboardRequestHandler, vessel_id, vessel_list)
     print("Starting the server on port %d" % PORT_NUMBER)
 
-    thread = Thread(target=server.start_elect)
-
     try:
-        thread.start()
         server.serve_forever()
     except KeyboardInterrupt:
         server.server_close()
