@@ -20,8 +20,7 @@ from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
 from httplib import HTTPConnection
 from random import randint
 from threading import Thread  # Thread Management
-# Encode POST content into the HTTP header
-# from urllib import urlencode
+from operator import itemgetter
 from urlparse import parse_qs  # Parse POST data
 
 # Global variables for HTML templates
@@ -56,23 +55,81 @@ class BlackboardServer(HTTPServer):
         self.store = {}
         # store the next id to insert
         self.current_key = -1
+        # store the last sequence number
+        self.last_seq_number = 0
         # server_address = 10.1.0.vessel_id
         self.vessel_id = vessel_id
         self.vessels = vessel_list
 
     # -------------------------------- Store Functions ----------------------
 
-    def add_value_to_store(self, value):
+    def add_value_to_store(self, value, seq = None, source = None,
+                           key = None):
         """ Add a new value to the store
 
         :param value: the value to add
+        :param seq: the Logical Clock of the POST request
+                    which triggered this addition
+        :param source: the vessel address which originated the
+                        POST request
+        :param key: the key of the new value to add
         :return: the new key inserted
         """
-        self.current_key += 1
 
-        # add the current value to the store
-        self.store[self.current_key] = value
+        conflict = False
+        # if the seq parameter is None
+        # -> it's a local addition
+        if seq is None:
+            # update the last sequence number
+            self.last_seq_number += 1
+            # the next key of the value to add
+            self.current_key += 1
+            # source is a client web browser
+            # we assume that it's the current vessel
+            # more practical for the store organization
+            source = "10.1.0.%d" % (self.vessel_id)
+            # add the value at the end of the store
+            self.store[self.current_key] = [value,
+                                            self.last_seq_number,
+                                            source]
+        else:
+            # otherwise the seq corresponds to a POST
+            # which has been received from another vessel
+            self.current_key += 1
+            # if the received POST happened 'after'
+            # the last event
+            if seq >= self.last_seq_number:
+                self.last_seq_number = seq + 1
+            elif seq < self.last_seq_number: # otherwise
+                self.last_seq_number += 1
+            self.store[self.current_key] = [value, seq, source]
+
+            # classify the store then
+            self.store = self.classify_store(self.store)
+
         return self.current_key
+
+    def classify_store (self,store):
+        """ Add a new value to the store
+
+        :param store: classify the store based on the values
+                      of the LC and the IP source address
+        :return store_stored: a classified store
+        """
+        store_sorted = {}
+        key = 0
+        # sort the values of the store
+        # based on the lowest LC
+        # when 2 values have the same LC, the one with
+        # the lowest IP address comes first
+        sorted_values = sorted(store.values(), key = itemgetter(1,2))
+
+        # create a new store with the sorted values
+        for val in sorted_values:
+            store_sorted[key] = val
+            key += 1
+
+        return store_sorted
 
     def delete_value_in_store(self,key):
         """ Delete an entry in the store
@@ -107,7 +164,7 @@ class BlackboardServer(HTTPServer):
 
     # -------------------------------- Communication Functions --------------
 
-    def contact_vessel(self, vessel_ip, path, action, key, value):
+    def contact_vessel(self, vessel_ip, path, action, key, value, seq_number):
         """ Contact a vessel with a set of fields to transmit to it
 
         :param vessel_ip: the ip of the vessel to contact
@@ -115,12 +172,14 @@ class BlackboardServer(HTTPServer):
         :param action: the action to perform on value
         :param key: the key of value
         :param value: the value itself
+        :param seq_number: the sequence of the POST propagated (LS(value))
         :return: True if everything goes well, False otherwise
         """
 
         success = False
         # encode the fields in a json format
-        post_content = json.dumps({'action': action, 'key': key, 'value': value})
+        post_content = json.dumps({'action': action, 'key': key,
+                                   'value': value, 'LS':seq_number})
         # format the HTTP headers with the type of data being transported
         headers = {"Content-type": "application/json"}
 
@@ -147,13 +206,14 @@ class BlackboardServer(HTTPServer):
 
         return success
 
-    def propagate_value_to_vessels(self, path, action, key, value):
+    def propagate_value_to_vessels(self, path, action, key, value, seq_number):
         """ Send unicast/broadcast information to one/all the vessel(s)
 
         :param path: the path of the request
         :param action: the action to perform on value
         :param key: the key of value
         :param value: the value itself
+        :param seq_number: the sequence of the POST propagated (LS(value))
         """
 
         #TODO: after x attempts, just drop it
@@ -165,8 +225,8 @@ class BlackboardServer(HTTPServer):
             if vessel != ("10.1.0.%s" % self.vessel_id):
                 while not success_contact:
                     success_contact = self.contact_vessel(vessel, path,
-                                                              action, key,
-                                                              value)
+                                                        action, key,
+                                                        value,seq_number)
 
 
 """ HTTP Handler class
@@ -307,20 +367,25 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
         return post_data
 
-    def handle_post_from_vessel(self, action, key, value):
+    def handle_post_from_vessel(self, action, key, value, source, seq):
         """ Handle a POST request received from a vessel -- propagation
 
         :param action: the action to perform on the propagated value
         :param key: the key of the propagated value
         :param value: the propagated value itself
+        :param source: the ip address of the vessel which propagated
+                the POST
+        :param seq: the timestamp of the POST
         :return status: None if something goes wrong or an integer
         """
+
+        # update the logical clock
 
         status = 1
 
         # if it's an addition, add it to the store
         if action == 'add':
-            status = self.server.add_value_to_store(value)
+            status = self.server.add_value_to_store(value, seq, source, key)
         if action == 'modify':
             if not self.server.modify_value_in_store(int(key),value):
                 status = None
@@ -402,6 +467,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         print("POST request received on path %s" % self.path)
         propagate = False
         action = ''
+        seq_number = 0
 
         # application / json --> POST request from a vessel
         if self.headers["Content-type"] == "application/json" :
@@ -411,14 +477,17 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             post_body = self.parse_POST_request()
             post_body = json.loads(post_body)
 
-            action, entry_key, post_entry = post_body["action"], \
-                                            post_body["key"], \
-                                            post_body["value"]
+            action, entry_key, post_entry, post_seq\
+                        = post_body["action"], \
+                            post_body["key"], \
+                            post_body["value"], \
+                            post_body["LS"]
 
             # handle the post
             handle_result = self.handle_post_from_vessel\
                                         (action, entry_key,
-                                            post_entry)
+                                        post_entry,self.client_address[0],
+                                            post_seq)
 
             if handle_result is None:
                 self.set_HTTP_headers(404)
@@ -427,14 +496,15 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         elif self.headers["Content-type"] == \
                 "application/x-www-form-urlencoded":
 
+            # a propagation will be needed
+            propagate = True
+
             # parse the content with parse_qs and format it correctly
             post_body = self.handle_formatting\
                             (self.parse_POST_request(False))
             # get the actual value
             post_entry = post_body['entry']
 
-            # a propagation will be needed
-            propagate = True
             # handle the POST received
             handle_post = self.handle_post_from_browser(self.path,
                                                         post_body)
@@ -452,7 +522,9 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             # We must then create threads if we want to do some heavy computation
             #
             # Random content
-            thread = Thread(target=self.server.propagate_value_to_vessels,args=(self.path,action, entry_key, post_entry) )
+            thread = Thread(target=self.server.propagate_value_to_vessels,
+                            args=(self.path,action, entry_key, post_entry,
+                                  self.server.last_seq_number) )
             # We kill the process if we kill the server
             thread.daemon = True
             # We start the thread
