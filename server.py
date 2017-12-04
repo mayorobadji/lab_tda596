@@ -463,7 +463,6 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
         :return: Nothing
         """
-
         print("POST request received on path %s" % self.path)
         propagate = False
         action = ''
@@ -499,6 +498,9 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             # a propagation will be needed
             propagate = True
 
+            # get the seq number of the new POST
+            seq_number = self.server.last_seq_number + 1
+
             # parse the content with parse_qs and format it correctly
             post_body = self.handle_formatting\
                             (self.parse_POST_request(False))
@@ -524,7 +526,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             # Random content
             thread = Thread(target=self.server.propagate_value_to_vessels,
                             args=(self.path,action, entry_key, post_entry,
-                                  self.server.last_seq_number) )
+                                  seq_number) )
             # We kill the process if we kill the server
             thread.daemon = True
             # We start the thread
