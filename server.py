@@ -16,6 +16,7 @@ import sys
 import time
 # Socket specifically designed to handle HTTP requests
 from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
+from datetime import datetime
 # Create a HTTP connection, as a client
 from httplib import HTTPConnection
 from random import randint
@@ -65,7 +66,7 @@ class BlackboardServer(HTTPServer):
         self.lead_found = False
         # the leader id
         self.lead_id = None
-
+        self.start = None
     # -------------------------------- Store Functions ----------------------
 
     def add_value_to_store(self, value, key=None):
@@ -588,6 +589,10 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         :return: Nothing
         """
 
+        if "entries" in self.path and self.server.start is None:
+            self.server.start = str(datetime.now())
+
+
         print("POST request received on path %s" % self.path)
         propagate = False
         action = ''
@@ -687,6 +692,9 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         # POST Logic
         #------------------------------------------------------------------------------------------------------
 
+        if self.server.start is not None:
+            print "Started at " +self.server.start
+            print "Finished at " +str(datetime.now())
 
 
 
