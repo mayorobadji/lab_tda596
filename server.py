@@ -16,6 +16,7 @@ import sys
 import time
 # Socket specifically designed to handle HTTP requests
 from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
+from datetime import datetime
 # Create a HTTP connection, as a client
 from httplib import HTTPConnection
 from random import randint
@@ -67,6 +68,7 @@ class BlackboardServer(HTTPServer):
         self.pending_modif = {}
         # the latest delete
         self.recent_delete = []
+        self.started = ""
 
     # ---------------------- Updates Functions from Browser to Vessel  ----------------------
 
@@ -591,7 +593,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         elif '/entries/' in path:
             # get the id : path = /entries/id
             key = self.path[9:]
-            print key
+
 
             # check whether it's a modification or a suppression
             if post_body['delete'][0] == "0":
@@ -642,6 +644,8 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
         :return: Nothing
         """
+        if self.server.last_seq_number == 0:
+            self.server.started = str(datetime.now())
 
         print("POST request received on path %s" % self.path)
         propagate = False
@@ -695,7 +699,6 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             handle_post = self.handle_post_from_browser(self.path,
                                                         post_body)
 
-
             if handle_post is None: # nothing was deleted
                 propagate = False
             else:
@@ -728,10 +731,8 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         # POST Logic
         #------------------------------------------------------------------------------------------------------
 
-
-
-
-
+        print "Started at " + self.server.started
+        print "Finished at " + str(datetime.now())
 
 #------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------
