@@ -61,7 +61,10 @@ class BlackboardServer(HTTPServer):
         self.last_seq_number = 0
         # server_address = 10.1.0.vessel_id
         self.vessel_id = vessel_id
-        self.vessels = vessel_list
+        # self.vessels represent the vessels in the same segment
+        self.vessels = vessel_list[0]
+        # and this the vessels in the other one
+        self.other_vessels = vessel_list[1]
         # the pending delete
         self.pending_delete = {}
         # the pending modification
@@ -334,8 +337,30 @@ class BlackboardServer(HTTPServer):
 
                 del(self.pending_modif[key])
 
+    def segment_network(self):
+        """" Splits the network in 2 segments before merging them after a certain
+                time
 
+        Executed as a Thread
 
+        """
+
+        # wait for 20 seconds
+        time.sleep(20)
+
+        # store the old neighbours
+        temp = self.other_vessels
+
+        # split the network
+        # from this communication with the other part of the network
+        # is disabled
+        self.other_vessels = None
+
+        # wait again for 20 seconds
+        time.sleep(20)
+
+        # re-establish the communication
+        self.other_vessels = temp
 
     # -------------------------------- Communication Functions --------------
 
@@ -739,26 +764,76 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 # Execute the code
 if __name__ == '__main__':
 
-    ## read the templates from the corresponding html files
-    # .....
-
+    # the topology is no longer one to one
+    # a vessel may belongs to more than one segment
+    # we assume two segments here
+    # and we use the total number of vessels
+    # to determine which vessel goes to which segment
+    # E.G: we have 6 vessels
+    # --> 1 and 2 belong to segment 1
+    # --> 4, 5 and 6 belong to segment 2
+    # --> 3 belongs to both
+    own_segment = []
+    other_segment = []
     vessel_list = []
     vessel_id = 0
-    # Checking the arguments
+
+    # Checks the arguments
     if len(sys.argv) != 3: # 2 args, the script and the vessel name
         print("Arguments: vessel_ID number_of_vessels")
     else:
-        # We need to know the vessel IP
+        # Get the current vessel id
         vessel_id = int(sys.argv[1])
-        # We need to write the other vessels IP, based on the knowledge of their number
-        for i in range(1, int(sys.argv[2])+1):
-            vessel_list.append("10.1.0.%d" % i) # We can add ourselves, we have a test in the propagation
+        # Get the number of nodes
+        nb_nodes = int(sys.argv[2])
+
+        # All-to-All network block
+        #for i in range(1, int(sys.argv[2])+1):
+        #    vessel_list.append("10.1.0.%d" % i)
+        # end of All-to-All network block
+
+        # Segmented network block
+
+        # determine the node that will belong in all the segments
+        if nb_nodes % 2 == 0: # 6 nodes --> x = 3
+            x = nb_nodes / 2
+        else: # 5 nodes --> x = 3
+            x = int (nb_nodes / 2) + 1
+
+        # determine the neighbours of the current vessel
+        if vessel_id < x:
+            # from 1 to x included
+            for i in range(1,x+1):
+                own_segment.append("10.1.0.%d" % i)
+        elif vessel_id > x:
+            # from x to nb_nodes included
+            for i in range(x+1, nb_nodes+1):
+                own_segment.append("10.1.0.%d" % i)
+            # in the other segment the nodes
+            other_segment.append("10.1.0.%s" % x)
+        elif vessel_id == x:
+            for i in range(1,x+1):
+                own_segment.append("10.1.0.%d" % i)
+            for i in range(x,nb_nodes+1):
+                other_segment.append("10.1.0.%d" % i)
+
+        # end of Segmented network block
+        vessel_list.append(own_segment)
+        vessel_list.append(other_segment)
 
     # We launch a server
     server = BlackboardServer(('', PORT_NUMBER), BlackboardRequestHandler, vessel_id, vessel_list)
+
+    """
+    """
+    print vessel_list
+
+    thread = Thread(target=server.segment_network)
+
     print("Starting the server on port %d" % PORT_NUMBER)
 
     try:
+        thread.start()
         server.serve_forever()
     except KeyboardInterrupt:
         server.server_close()
