@@ -8,6 +8,7 @@
 # -----------------------------------------
 #TODO: improve the leader election --> election msgs with priorities
 #TODO: in do_GET() --> wait for the leader to be found before responding
+#TODO: in propagate() quit after 5 attempts
 
 # import the libraries
 import codecs
@@ -43,13 +44,16 @@ It contains the main actions a vessel can perform
 """
 class BlackboardServer(HTTPServer):
 
-    def __init__(self, server_address, handler, node_id, vessel_list):
+    def __init__(self, server_address, handler, node_id, vessel_list, common_node):
         """ Vessel constructor
 
         :param server_address: IP address of the vessel
         :param handler: HTTP events handler
         :param node_id: id of the vessel (host address in the IP address)
-        :param vessel_list: list of the other vessels
+        :param vessel_list: list of the vessels with which the current vessel
+                            communicates directly
+        :param common_node: indicates whether the nodes belongs to one or
+                            several segments
         """
 
         HTTPServer.__init__(self,server_address, handler)
@@ -61,9 +65,10 @@ class BlackboardServer(HTTPServer):
         self.last_seq_number = 0
         # server_address = 10.1.0.vessel_id
         self.vessel_id = vessel_id
-        # self.vessels represent the vessels in the same segment
+        # the vessels in the same segment
         self.vessels = vessel_list[0]
-        # and this the vessels in the other one
+        # the vessels in the other segment
+        # with which we communicate directly
         self.other_vessels = vessel_list[1]
         # the pending delete
         self.pending_delete = {}
@@ -72,6 +77,16 @@ class BlackboardServer(HTTPServer):
         # the latest delete
         self.recent_delete = []
         self.started = ""
+        # check whether the current vessel in an intermediary
+        # node or not
+        if common_node: self.intermediary = True
+        else: self.intermediary = False
+
+        # boolean used to simulate the network segmentation
+        self.net_segmented = False
+
+        # the history of the updates
+        self.history = []
 
     # ---------------------- Updates Functions from Browser to Vessel  ----------------------
 
@@ -92,7 +107,7 @@ class BlackboardServer(HTTPServer):
         self.current_key += 1
 
         # set the source field to id of the local vessel
-        source = "%d" % (self.vessel_id)
+        source = "10.1.0.%d" % (self.vessel_id)
 
         # add the triplett [value, LC, src] to the store
         self.store[self.current_key] = [value,
@@ -346,25 +361,31 @@ class BlackboardServer(HTTPServer):
         """
 
         # wait for 20 seconds
-        time.sleep(20)
-
-        # store the old neighbours
-        temp = self.other_vessels
+        time.sleep(60)
 
         # split the network
         # from this communication with the other part of the network
         # is disabled
-        self.other_vessels = None
+        self.net_segmented = True
+        print "net segmented"
 
         # wait again for 20 seconds
-        time.sleep(20)
+        time.sleep(60)
 
         # re-establish the communication
-        self.other_vessels = temp
+        self.net_segmented = False
+        print "net desegmented"
 
-    # -------------------------------- Communication Functions --------------
+        # if you have other vessels in the other segment
+        # and something to propagate
+        if len(self.other_vessels) != 0 and len(self.history) != 0:
+            self.propagate_history()
 
-    def contact_vessel(self, vessel_ip, path, action, key, value, seq_number):
+
+    # -------------------------------- Communication Functions -------------------
+
+    def contact_vessel(self, vessel_ip, path, action, key, value, seq_number,
+                       source_id):
         """ Contact a vessel with a set of fields to transmit to it
 
         :param vessel_ip: the ip of the vessel to contact
@@ -373,13 +394,16 @@ class BlackboardServer(HTTPServer):
         :param key: the key of value
         :param value: the value itself
         :param seq_number: the sequence of the POST propagated (LS(value))
+        :param source_id : the id of the vessel that has originated the
+                            POST request
         :return: True if everything goes well, False otherwise
         """
 
         success = False
         # encode the fields in a json format
         post_content = json.dumps({'action': action, 'key': key,
-                                   'value': value, 'TS':seq_number})
+                                   'value': value, 'TS':seq_number,
+                                   'source_id':source_id})
         # format the HTTP headers with the type of data being transported
         headers = {"Content-type": "application/json"}
 
@@ -406,7 +430,8 @@ class BlackboardServer(HTTPServer):
 
         return success
 
-    def propagate_value_to_vessels(self, path, action, key, value, seq_number):
+    def propagate_value_to_vessels(self, path, action, key, value, seq_number,
+                                   source_id,other_segment=False):
         """ Send unicast/broadcast information to one/all the vessel(s)
 
         :param path: the path of the request
@@ -414,26 +439,54 @@ class BlackboardServer(HTTPServer):
         :param key: the key of value
         :param value: the value itself
         :param seq_number: the sequence of the POST propagated (LS(value))
+        :param source_id: the vessel that has originated the POST request
+        :param other_segment: propagate to the vessels in another segment
         """
 
-        #TODO: after x attempts, just drop it
+        if other_segment:
+            vessels = self.other_vessels
+        else:
+            vessels = self.vessels
 
         # We iterate through the vessel list
-        for vessel in self.vessels:
+        for vessel in vessels:
             success_contact = False
             # We should not send it to our own IP, or we would create an infinite loop of updates
             if vessel != ("10.1.0.%s" % self.vessel_id):
                 while not success_contact:
                     success_contact = self.contact_vessel(vessel, path,
                                                         action, key,
-                                                        value,seq_number)
+                                                        value,seq_number,
+                                                          source_id)
+
+    def propagate_history(self):
+        """ Propagate the updates stored in the local history
+
+        Launched as a Thread upon the reception of a POST request
+        :return:
+        """
+        # take each update in the history
+        # format update : [action,key,entry,timestamp,source]
+        for update in self.history:
+            # if the source of the update is in our own segment
+            if update[-1] in self.vessels:
+                self.propagate_value_to_vessels(update[0],update[1],
+                                                update[2],update[3],
+                                                update[4],update[5],True)
+            # otherwise
+            elif update[-1] in self.other_vessels:
+                self.propagate_value_to_vessels(update[0], update[1],
+                                                update[2], update[3],
+                                                update[4], update[5])
+
+
 
 
 """ HTTP Handler class
 
 This class handles the requests received (GET, POST)
 The server attributes are accessible through self.server.*
-Attributes of the server are SHARED accross all request handling/ threads!
+Attributes of the server are SHARED accross all request handling/threads!
 
 """
 class BlackboardRequestHandler(BaseHTTPRequestHandler):
@@ -601,7 +654,8 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
         :param path: the path of the request
         :param post_body: the body of the POST
-        :return fields: a list -- [action, key] of the value in post_body
+        :return fields: a list -- [action, key]
+                            of the value in post_body
         """
         fields = []
 
@@ -669,45 +723,90 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
         :return: Nothing
         """
-        if self.server.last_seq_number == 0:
-            self.server.started = str(datetime.now())
+
+        # To make the code looks simple :
+        # Assume 6 vessels
+        # 1 and 2 in one segment
+        # 4, 5 and 6 in another one
+        # 3 is the intermediary node that belongs to both segments
+
+        # if self.server.last_seq_number == 0:
+        #    self.server.started = str(datetime.now())
 
         print("POST request received on path %s" % self.path)
-        propagate = False
+
+        # Boolean for propagation to the nodes in the
+        # same segment
+        local_propagate = False
+        # Boolean for propagation to the nodes in the other
+        # segment
+        remote_propagate = False
+        # Boolean for history propagation
+        history_propagate = False
+
         action = ''
+        entry_key = ''
+        post_entry = ''
         timestamp = 0
+        source = "10.1.0."
 
-        # application / json --> POST request from a vessel
+        # POST from a vessel
         if self.headers["Content-type"] == "application/json" :
-            propagate = False
 
-            # read the content of the file
+            # get the POST content
             post_body = self.parse_POST_request()
             post_body = json.loads(post_body)
 
-            print post_body
-
-            action, entry_key, post_entry, post_seq\
+            action, entry_key, post_entry, post_seq, id\
                         = post_body["action"], \
                             post_body["key"], \
                             post_body["value"], \
-                            post_body["TS"]
+                            post_body["TS"], \
+                            post_body["source_id"]
+
+            source = str(id)
 
             # handle the post
             handle_result = self.handle_post_from_vessel\
                                         (action, entry_key,
-                                        post_entry,self.client_address[0][7:],
-                                            post_seq)
+                                          post_entry,
+                                           id, post_seq)
 
             if handle_result is None:
                 self.set_HTTP_headers(404)
+            # this part concerns only the intermediary vessel (3)
+            # it links the two segments
+            # (1,2) <--> 3 <--> (4,5,6)
 
-        # www-urlencoded... --> POST request from a client browser
+            if handle_result is not None and self.server.intermediary:
+
+                # if the network is segmented
+                # store the POST request
+                # to the history
+                if self.server.net_segmented:
+                    self.server.history.append([self.path,action,
+                                                entry_key, post_entry,
+                                                post_seq,
+                                                source])
+                # if the network is not segmented
+                # perform a propagation in one of the 2 segments
+                else:
+                    # set the appropriate timestamp
+                    timestamp = post_seq
+                    
+                    # if the request comes from a node in segment_1
+                    if source in self.server.vessels:
+                        # send the messages to the nodes in segment_2
+                        remote_propagate = True
+                    # if it comes from a node in segment 2
+                    elif source in self.server.other_vessels:
+                        # send to the nodes in segment_1
+                        local_propagate = True
+
+
+        # POST from a browser
         elif self.headers["Content-type"] == \
                 "application/x-www-form-urlencoded":
-
-            # a propagation will be needed
-            propagate = True
 
             # set the timestamp (used when the POST request
             # is propagated)
@@ -724,9 +823,12 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             handle_post = self.handle_post_from_browser(self.path,
                                                         post_body)
 
-            if handle_post is None: # nothing was deleted
-                propagate = False
-            else:
+            # if nothing went wrong
+            if handle_post is not None:
+
+                # a local propagation will be needed
+                local_propagate = True
+
                 # if the POST request is on /entries (addition)
                 # then in handle_post we just have the action
                 # and the key of the new value
@@ -737,27 +839,55 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
                       # the value to delete
                     action,entry_key,post_entry = handle_post
 
-                self.set_HTTP_headers()
+                # the source is 10.1.0.vessel.id
+                source += str(self.server.vessel_id)
 
-        # propagate to the other vessels
-        if propagate:
-            # do_POST send the message only when the function finishes
-            # We must then create threads if we want to do some heavy computation
-            #
-            # Random content
+                # 1 and 2 will just act as usual
+                # whether the network is segmented or not
+                # they will just propagate locally
+                # local_propagate has already been setted to True
+                # this thus concerns 3, 4, 5 and 6
+                if len(self.server.other_vessels) != 0:
+                    # if the network is segmented
+                    if self.server.net_segmented:
+                        # store the update to the history
+                        self.server.history.append([self.path,action,
+                                                    entry_key, post_entry,
+                                                    timestamp, source])
+                    else:
+                        # local_propagate is already set to True
+                        # so if the network is not segmented
+                        # you made need to also send the updates
+                        # to the nodes in the other segment
+                        remote_propagate = True
+
+                self.set_HTTP_headers()
+            # otherwise
+            else:   # send a response
+                self.set_HTTP_headers(404)
+
+        # propagate to the vessels in the same segment
+        if local_propagate:
             thread = Thread(target=self.server.propagate_value_to_vessels,
                             args=(self.path,action, entry_key, post_entry,
-                                  timestamp) )
-            # We kill the process if we kill the server
+                                  timestamp,source) )
             thread.daemon = True
-            # We start the thread
             thread.start()
+
+        # propagate to the vessels in the other segment
+        if remote_propagate:
+            thread_1 = Thread(target=self.server.propagate_value_to_vessels,
+                                args=(self.path, action, entry_key, post_entry,
+                                      timestamp,source,True))
+            thread_1.daemon = True
+            thread_1.start()
+
         #------------------------------------------------------------------------------------------------------
         # POST Logic
         #------------------------------------------------------------------------------------------------------
 
-        print "Started at " + self.server.started
-        print "Finished at " + str(datetime.now())
+        #print "Started at " + self.server.started
+        #print "Finished at " + str(datetime.now())
 
 #------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------
@@ -765,16 +895,18 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 if __name__ == '__main__':
 
     # the topology is no longer one to one
-    # a vessel may belongs to more than one segment
     # we assume two segments here
     # and we use the total number of vessels
     # to determine which vessel goes to which segment
+    # and which one belongs to both
     # E.G: we have 6 vessels
     # --> 1 and 2 belong to segment 1
     # --> 4, 5 and 6 belong to segment 2
     # --> 3 belongs to both
     own_segment = []
     other_segment = []
+    # the intermediary node
+    common_node = False
     vessel_list = []
     vessel_id = 0
 
@@ -787,42 +919,50 @@ if __name__ == '__main__':
         # Get the number of nodes
         nb_nodes = int(sys.argv[2])
 
-        # All-to-All network block
-        #for i in range(1, int(sys.argv[2])+1):
-        #    vessel_list.append("10.1.0.%d" % i)
-        # end of All-to-All network block
-
-        # Segmented network block
-
         # determine the node that will belong in all the segments
         if nb_nodes % 2 == 0: # 6 nodes --> x = 3
             x = nb_nodes / 2
         else: # 5 nodes --> x = 3
             x = int (nb_nodes / 2) + 1
 
+        # we assume that nb_nodes = 6
+
         # determine the neighbours of the current vessel
+        # nodes 1 and 2
         if vessel_id < x:
             # from 1 to x included
+            # 1 and 2 do not communicate directly with
+            # 4, 5 and 6
+            # there is no need to add something to the
+            # other_segment list
             for i in range(1,x+1):
                 own_segment.append("10.1.0.%d" % i)
+        # nodes 4, 5 and 6
         elif vessel_id > x:
             # from x to nb_nodes included
             for i in range(x+1, nb_nodes+1):
                 own_segment.append("10.1.0.%d" % i)
-            # in the other segment the nodes
+
+            # these nodes communicate directly with
+            # the intermediary node
             other_segment.append("10.1.0.%s" % x)
+        # intermediary node
         elif vessel_id == x:
+            # the nodes in the left (1 and 2) x included
             for i in range(1,x+1):
                 own_segment.append("10.1.0.%d" % i)
+            # the nodes in the right (4, 5 and 6) x included
             for i in range(x,nb_nodes+1):
                 other_segment.append("10.1.0.%d" % i)
+
+            common_node = True
 
         # end of Segmented network block
         vessel_list.append(own_segment)
         vessel_list.append(other_segment)
 
     # We launch a server
-    server = BlackboardServer(('', PORT_NUMBER), BlackboardRequestHandler, vessel_id, vessel_list)
+    server = BlackboardServer(('', PORT_NUMBER), BlackboardRequestHandler, vessel_id, vessel_list, common_node)
 
     """
     """
