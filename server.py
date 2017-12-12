@@ -793,7 +793,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
                 else:
                     # set the appropriate timestamp
                     timestamp = post_seq
-                    
+
                     # if the request comes from a node in segment_1
                     if source in self.server.vessels:
                         # send the messages to the nodes in segment_2
