@@ -62,121 +62,123 @@ class BlackboardServer(HTTPServer):
         # server_address = 10.1.0.vessel_id
         self.vessel_id = vessel_id
         self.vessels = vessel_list
+        # the latest delete
+        self.recent_delete = []
         # the pending delete
         self.pending_delete = {}
         # the pending modification
         self.pending_modif = {}
-        # the latest delete
-        self.recent_delete = []
+        # used to record the first the vessel receives a POST
         self.started = ""
 
     # ---------------------- Updates Functions from Browser to Vessel  ----------------------
 
 
-    def add_value_to_store(self, value):
-        """ Add a new value to the store
+    def add_value_from_browser(self, value):
+        """ Add a entry to the store
 
-        Triggered when the current vessel receives a POST request on /entries
+        upon the reception of a POST on /entries from a browser,
+        this function adds a new value to the store
 
-        :param value: the value to add
-        :return: the new key inserted
+        :param value: the new value to add
+        :return self.current_key: the key of the new value inserted
         """
 
-        # update the last sequence number received
+        # set the logical clock for this addition
         self.last_seq_number += 1
 
         # increment the last key of the store
         self.current_key += 1
 
-        # set the source field to id of the local vessel
+        # set the source field to the local vessel id
         source = "%d" % (self.vessel_id)
 
-        # add the triplett [value, LC, src] to the store
-        self.store[self.current_key] = [value,
-                                            self.last_seq_number,
-                                                source]
+        # add the triplett [value, LC, src] at the end of the store
+        self.store[self.current_key] = [value, self.last_seq_number,
+                                            source]
 
+        # return the key of the value inserted
         return self.current_key
 
-    def delete_value_in_store(self, key):
+    def delete_value_from_browser(self, key):
         """ Delete an entry in the store
 
-        Triggered when the current vessel receives a POST request on /entries/%d
-        with delete = "1" from a browser
+        upon the reception of a POST on /entries/key from a browser,
+        this function deletes the value at the index key in the store
 
         :param key: the key of the entry to delete
-        :return: the value suppressed in case of success,
-                    None otherwise
+        :return value_deleted: the value deleted or None
         """
 
-        # check if the value exists
+        # the key may be in the store
         if key in self.store:
 
-            # get the value
+            # get the value to delete
             value_deleted = self.store[key]
 
             # delete it
             del self.store[key]
 
-            # archive the value deleted
+            # store the suppression in the recent deletes history
             self.recent_delete.append(value_deleted)
-        # if the values does not exist
+        # the key may not be in the store
         else:
-            # maybe it has already been deleted
-            # by another vessel
+            # maybe the value has already been deleted
+            # before
             value_deleted = None
 
         return value_deleted
 
-    def modify_value_in_store(self,key,new_value):
-        """ Modify the value of an entry in the store
+    def modify_value_from_browser(self, key, new_value):
+        """ Modify an entry in the store
 
+        upon the reception of a POST on /entries/key from a browser,
+        this function replaces a value in the store by new value
 
-        Triggered when the current vessel receives a POST request on /entries/%d
-        with delete = "0" from a browser
-
-        :param key: the key of the value being modified
-        :param new_value: the new value to add
-        :return: the couple [old_value, new_value] in case of success
-                    None otherwise
+        :param key: the key of the value to modify
+        :param new_value: the new value
+        :return <list>: the couple [old_value, new_value] or None
         """
 
-        # check if the key exists
+
+        # the key may be in the store
         if key in self.store:
 
-            # get the old value
-            val_to_modify = self.store[key]
+            # get the old value to replace
+            old_value = self.store[key]
 
-            # update the last sequence number received
+            # set the logical clock for this modification
             self.last_seq_number += 1
 
-            # set the source field to id of the local vessel
+            # set the source field to the the local vessel id
             source = "%d" % (self.vessel_id)
 
             # modify the value
             self.store[key] = [new_value,self.last_seq_number,
                                    source]
 
-            return [val_to_modify, self.store[key]]
+            return [old_value, self.store[key]]
         else:
             return None
 
     # ---------------------- Updates Functions from Vessel to Vessel  ----------------------
 
 
-    def add_value_to_store_bis(self, value, ts, source):
-        """ Add a new value to the store
+    def add_value_from_vessel(self, value, ts, source):
+        """ Add a entry to the store
 
-        Triggered when the current vessel receives a POST request from another vessel
+        upon the reception of a POST on /entries from a vessel,
+        this function adds a new value to the store
 
         :param value: the value to add
-        :param ts: the timestamp of the POST request
-        :param source: the id of the vessel which has sent the POST request
-        :param key: the key of the new value to add
-        :return: the new key inserted
+        :param ts: the timestamp of the POST request received
+        :param source: the id of the vessel that has sent the request
+        :param key: the key of the value to add (received in the request)
+        :return self_current_key: the key of the value inserted
         """
 
-        # if the POST happened 'after' the last local event
+        # the POST may have happened 'after'
+        # the last local event
         if ts >= self.last_seq_number:
             # set the new logical clock
             self.last_seq_number = ts + 1
@@ -186,114 +188,120 @@ class BlackboardServer(HTTPServer):
         # increment the last key of the store
         self.current_key += 1
 
+        # store the value received at the end of the store
         self.store[self.current_key] = [value, ts, source]
 
-        # classify the store then
+        # then classify the values in the store based on their LCs
         self.store = self.classify_store(self.store)
 
-        # check if there is values that should be deleted from
-        # the store or modified
+        # once the store is classified, one may need to check if there
+        # are stored updates that need to be perform
         self.apply_pending_updates()
 
         return self.current_key
 
-    def delete_value_in_store_bis(self, value_to_delete, ts, key):
+    def delete_value_from_vessel(self, key, value_to_delete):
         """ Delete an entry in the store
 
-        Triggered when the current vessel receives a POST request on /entries/%d
-        with delete = "1" from another vessel
+        upon the reception of a POST on /entries/key from a vessel,
+        this function removes an entry from the store
 
+        :param key: the key of the entry to delete (received in the request)
         :param value_to_delete: the value to suppress
-        :param ts: the timestamp of the POST request
-        :param key: the key of the entry to delete
-        :return: the value suppressed in case of success,
-                    None otherwise
+        :return value_in_store: the value suppressed or None
         """
+        value_in_store = None
 
-        # check if value has been recently deleted
-        if value_to_delete in self.recent_delete:
-            return None
+        # if the value have been deleted recently
+        # there is no need to delete it again
+        # so the operation goes only if value_to_delete
+        # has not been deleted recently
+        if value_to_delete not in self.recent_delete:
 
-        # check if the value exists
-        if key in self.store:
+            # the key may exist in the store
+            if key in self.store:
 
-            # get the value in store
-            value_in_store = self.store[key]
+                # get the value in store
+                value_in_store = self.store[key]
 
-            # need to check the clocks and the addresses
-            if value_in_store == value_to_delete:
+                # since the 2 vessels may be in inconsistent states
+                # the value to delete should correspond to the value
+                # in the store at this point
                 # same value, same LC, same IP address
-                del self.store[key]
+                if value_in_store == value_to_delete:
+                    del self.store[key]
 
-                # store the delete to the latest delete
-                self.recent_delete.append(value_in_store)
-
-            else:  # add it to the pending delete
+                    # store the delete
+                    self.recent_delete.append(value_in_store)
+                # the values may also not correspond
+                else:
+                    # then one may store the suppression as a
+                    # pending delete
+                    self.pending_delete[key] = value_to_delete
+                    value_in_store = None
+            # the key may not exist in the store
+            else:
+                # the message may not have been arrived yet
+                # so the delete should be stored
                 self.pending_delete[key] = value_to_delete
-                return None
-
-        else:
-            value_in_store = None
-            # maybe the message has not arrived yet
-            # so it should be stored in the pending updates
-            self.pending_delete[key] = value_to_delete
 
         return value_in_store
 
-    def modify_value_in_store_bis(self,key,new_value, old_value):
-        """ Modify the value of an entry in the store
+    def modify_value_from_vessel(self, key, new_value, value_to_modify):
+        """ Modify an entry in the store
 
+        upon the reception of a POST on /entries/key from a vessel,
+        this function replaces an entry in the store (old_value) by new_value
 
-        Triggered when the current vessel receives a POST request on /entries/%d
-        with delete = "0" from a vessel
-
-        :param key: the key of the value being modified
-        :param new_value: the new value to add
-        :param new_value: the old value to modify in the store
-        :return: the couple [old_value, new_value] in case of success
-                    None otherwise
+        :param key: the key of the value to modify
+        :param new_value: the new value
+        :param value_to_modify: the old value to modify in the store
+        :return <list>: the couple [old_value, new_value] or None
         """
 
-        # check if the key exists
+        # the key may exist in the store
         if key in self.store:
 
             # get the old value
-            val_to_modify = self.store[key]
+            val_in_store = self.store[key]
 
-            # check if the val_to_modify corresponds to
-            # the old_value
-            if val_to_modify == old_value:
+            # check if val_in_store corresponds to the value to modify
+            if val_in_store == value_to_modify:
 
-                # if the propagated modification is more recent
-                # than the one in the store
-                if old_value[1] >= val_to_modify[1]:
+                # if the modification request received happened after
+                # the timestamp of the value in the store
+                if value_to_modify[1] >= val_in_store[1]:
                         # modify
                         self.store[key] = new_value
                 # otherwise
+                # the request is out-of-date
                 else: return None
-            # not the same values
             else:
-                # the message may not be arrived yet
-                self.pending_modif[key] = [old_value,new_value]
+                # the 2 vessels are in inconsistent states maybe
+                # store the modification
+                self.pending_modif[key] = [value_to_modify,new_value]
                 return None
         else:
-            self.pending_modif[key] = [old_value,new_value]
+            # the message may has not been arrived yet
+            # store the modification
+            self.pending_modif[key] = [value_to_modify,new_value]
             return None
 
-        return [val_to_modify,self.store[key]]
+        return [val_in_store,self.store[key]]
 
 
     # ---------------------- Triggering Updates Functions   ----------------------
 
     def classify_store (self,store):
         """ classify the store based on the values
-                      of the LC and the IP source address
+                      of the LCs and the IP source addresses
 
         :param store: the store to classify
         :return store_stored: a classified store
         """
         store_sorted = {}
         key = 0
+
         # sort the values of the store
         # based on the lowest LC
         # when 2 values have the same LC, the one with
@@ -308,30 +316,34 @@ class BlackboardServer(HTTPServer):
         return store_sorted
 
     def apply_pending_updates(self):
-        """ Apply the pendings delete to the data in the store
-
-        :return: Nothing
+        """ Apply the pending updates to the data in the store
         """
 
-        # check the values to delete
+        # check if there are values to delete
         for key,to_del in self.pending_delete.items():
 
-            # if the value to delete is in the dictionnary
+            # if the value to delete is in the store
             if key in self.store and self.store[key] == to_del:
-                # append the deletion to the recent deletes
-                self.recent_delete.append(to_del)
+
                 # delete it from the store and from the pending deletes
                 del(self.store[key])
                 del(self.pending_delete[key])
 
-        # check the values to modify
+                # append the deletion to the recent deletes
+                self.recent_delete.append(to_del)
+
+        # check if there are values to modify
         for key,to_mod in self.pending_modif.items():
 
+            # in to_mod : [[value_to_modify], [new_value]]
             if key in self.store and self.store[key] == to_mod[0]:
-                # check the LC
+                # check the clocks
                 if to_mod[0][1] >= self.store[key][0]:
+                    # if the modification happened after the clock of the POST
+                    # in the store
                     self.store[key] = to_mod[1]
 
+                # if we got here, the modification is no more pending
                 del(self.pending_modif[key])
 
 
@@ -361,7 +373,7 @@ class BlackboardServer(HTTPServer):
         try:
             # contact vessel:PORT_NUMBER since they all use the same port
             # set a timeout, after which the connection fails if nothing happened
-            connection = HTTPConnection("%s:%d" % (vessel_ip, PORT_NUMBER), timeout = 30)
+            connection = HTTPConnection("%s:%d" % (vessel_ip, PORT_NUMBER), timeout = 180)
             # only POST used here
             action_type = "POST"
             # send the HTTP request
@@ -382,7 +394,7 @@ class BlackboardServer(HTTPServer):
         return success
 
     def propagate_value_to_vessels(self, path, action, key, value, seq_number):
-        """ Send unicast/broadcast information to one/all the vessel(s)
+        """ Send broadcast information to one/all the vessel(s)
 
         :param path: the path of the request
         :param action: the action to perform on value
@@ -391,8 +403,7 @@ class BlackboardServer(HTTPServer):
         :param seq_number: the sequence of the POST propagated (LS(value))
         """
 
-        #TODO: after x attempts, just drop it
-
+        attempts = 0
         # We iterate through the vessel list
         for vessel in self.vessels:
             success_contact = False
@@ -402,6 +413,12 @@ class BlackboardServer(HTTPServer):
                     success_contact = self.contact_vessel(vessel, path,
                                                         action, key,
                                                         value,seq_number)
+                    attempts += 1
+
+                    # after 15 attempts, just drop it
+                    if attempts == 15:
+                        print("Failed to reach %s " % (vessel) )
+                        break
 
 
 """ HTTP Handler class
@@ -461,7 +478,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             # useful when modifying or deleting this entry
             action = prefix + str(id)
             entry_forms += self.get_file_content('server/entry_template.html')\
-                           % (action, id, entry)
+                           % (action, id, entry[0])
 
         return entry_forms
 
@@ -558,12 +575,14 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
         # if it's an addition, add it to the store
         if action == 'add':
-            status = self.server.add_value_to_store_bis(value, ts, source)
+            status = self.server.add_value_from_vessel(value, ts, source)
         if action == 'modify':
-            if not self.server.modify_value_in_store_bis(int(key),value[0],value[1]):
+            if self.server.modify_value_from_vessel(int(key),value[1],
+                                                         value[0]) is None:
                 status = None
         elif action == 'delete':
-            self.server.delete_value_in_store_bis(value, ts, int(key))
+            if self.server.delete_value_from_vessel(int(key),value) is None:
+                status = None
 
         if status is not None:
             # everything wen't well, an HTTP response should be sent
@@ -586,7 +605,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
             # add the value to the store
             # and store the new key in fields
-            fields.append(self.server.add_value_to_store
+            fields.append(self.server.add_value_from_browser
                                             (post_body['entry']))
 
         # it's a modification or a suppression
@@ -603,7 +622,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
                 fields.append(key)
                 # modify the new value
                 # the function will return [old triplet, new triplet]
-                modify = self.server.modify_value_in_store(int(key),
+                modify = self.server.modify_value_from_browser(int(key),
                                                       post_body['entry'])
                 if modify is None: return None
                 else:  fields.append(modify)
@@ -613,7 +632,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
                 # add the key
                 fields.append(key)
                 # the value to delete
-                delete = self.server.delete_value_in_store(int(key))
+                delete = self.server.delete_value_from_browser(int(key))
                 # nothing was deleted
                 if delete is None:  return None
 
