@@ -45,7 +45,8 @@ class BlackboardServer(HTTPServer):
 
         :param server_address: IP address of the vessel
         :param handler: HTTP events handler
-        :param node_id: id of the vessel (host address in the IP address)
+        :param node_id: id of the vessel (host address in the
+                                            IP address)
         :param vessel_list: list of the vessels
         """
         HTTPServer.__init__(self,server_address, handler)
@@ -56,31 +57,82 @@ class BlackboardServer(HTTPServer):
         self.byzantine = False
         # store of each general vote
         self.votes =  {}
-        # list of votes received by each general
-        self.vectors = []
+        # store of votes received by each general
+        self.vectors = {}
         # the vote result
         self.vote_result = None
 
     # -------------------------------- Agreement Functions ------------------
 
-    def get_votes_received(self):
-        """ Return the values in the votes store
+    def get_vector_to_send(self):
+        """ Return the vector to send to the other generals
 
-        :return votes: a list of votes
+        :return vector: a list of votes
         """
+        vector = []
         votes = []
+        i = 0
 
-        for value in self.votes.values():
-            votes.append(value)
+        # Gather all the votes in a vector
+        for val in self.votes.values():
+            votes.append(val)
 
-        # do it 3 times
-        votes.append(votes)
-        votes.append(votes)
+        # duplicate the votes for each general
+        # so we can have a vector for each general
+        # [[True,False,..., True],[True,False,..., True],...]
+        while i < 3:
+            vector.append(votes)
+            i += 1
 
-        return votes
+        return vector
 
-    def get_votes_result(self):
-        self.vote_result = "Attack"
+    def get_result(self):
+
+        index_vector = 0
+        subindex_vector = 0
+        temp_list = []
+        final_list = []
+
+        values = self.vectors.values()
+
+        # compare each element of the vector list
+        # [0,1,2,3],[0,1,2,3],[0,1,2,3]
+        while subindex_vector < 4:
+            while index_vector < 3:
+                temp_list.append(values[index_vector]
+                                                [subindex_vector])
+                index_vector += 1
+
+            final_list.append(self.get_max(temp_list))
+            del temp_list[:]
+
+            index_vector = 0
+            subindex_vector += 1
+
+        self.vote_result = self.get_max(final_list)
+
+    def get_max(self, list):
+        """ Get the maximum of True or False variables in a list
+
+        :return result: False where there are more False than True in list
+                        True otherwise
+        """
+        result = False
+        attack = 0
+        retreat = 0
+
+        for value in list:
+            if value is not None :
+                if value: attack += 1
+                else:     retreat += 1
+
+        if attack > retreat:
+            result = True
+        if attack == retreat:
+            result = None
+
+        print result
+        return result
 
     # -------------------------------- Communication Functions --------------
 
@@ -215,25 +267,27 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
         html_reponse = ""
 
-        if self.path == "/":
-            # get the content of the frontpage file
-            vote_frontpage_template = self.get_file_content\
-                ('server/vote_frontpage_template.html')
+        # get the content of the frontpage file
+        vote_frontpage_template = self.get_file_content \
+            ('server/vote_frontpage_template.html')
 
+
+        temp = "Votes \n" + str(self.server.votes.values()) + \
+               "\n\nVectors \n" + str(self.server.vectors.values())
+
+        # get the content of the result file
+        vote_result_template = self.get_file_content \
+                                   ('server/vote_result_template.html') \
+                               % (temp + "\n\nFinal Result " +
+                                  str(self.server.vote_result))
+        if self.path == "/":
             # format the html response
             html_reponse = vote_frontpage_template + \
-                               vote_result_template
+                            vote_result_template
 
         elif "/vote" in self.path:
-            temp = "Vote Result...\n  Vectors \n" + str(self.server.
-                                                        vectors)
-
-            # get the content of the result file
-            vote_result_template = self.get_file_content \
-                        ('server/vote_result_template.html') \
-                          % (temp + "\n\nFinal Result " +
-                             str(self.server.vote_result))
             # format the html response
+            # return only the last part
             html_reponse = vote_result_template
 
         self.wfile.write(html_reponse)
@@ -288,27 +342,29 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             # in that case, check if the vote store is full
             if not self.server.byzantine and len(self.server.votes) == 4:
                 # get the vector to propagate
-                vector_to_propagate = self.server.get_votes_received()
+                vector_to_propagate = self.server.get_vector_to_send()
 
             # the current vessel may be a byzantine
             # in that case, check if only the current node's vote remains
             elif self.server.byzantine and len(self.server.votes) == 3 :
                 # make it vote and store it for a later propagation
-                vote_to_propagate = byzantine_vote(3, 4, True)
+                vote_to_propagate = byzantine_vote(3, True)
+
+                # add a random value to the votes store
+                self.server.votes[self.server.vessel_id] = vote_to_propagate[-1]
 
                 # get the vector to propagate
-                vector_to_propagate = byzantine_vector(3, 4, True)
+                vector_to_propagate = byzantine_vector(3,4, True)
 
         # vector step
         elif step == 'vector' :
             # insert the new value in the vectors tore
-            # self.server.vectors[source_id] = value
-            self.server.vectors.append(value)
+            self.server.vectors[source_id] = value
             # check if the vector list is full
             # the current vessel vector is not included
             if len(self.server.vectors) == 3:
                 # calcul the result of the vote
-                self.server.get_votes_result()
+                self.server.get_result()
 
         return vote_to_propagate, vector_to_propagate
 
@@ -316,8 +372,12 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         """ Handles a POST request received from a browser
 
         :param path: the path of the request
-        :return a vote: True (attack) | False (retreat)
-                        | None (byzantine)
+        :return a list of votes to send to each general
+                attack -> [True,True,...,True]
+                retreat -> [False,False,...,False]
+                byzantine -> [True,False,...,True] if all the generals
+                have voted
+                            None otherwise
         """
 
         vote = None
@@ -338,14 +398,14 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
         elif path == '/vote/byzantine':
             # set the byzantine boolean
             self.server.byzantine = True
-            # the byzantine general waits for all the honest generals' votes
+            # the byzantine general waits for all the honest generals'
+            # votes
             # check if those votes have been received
             if len(self.server.votes) == 3: # 3 honest generals
 
                 # make the byzantine node vote
-                vote = byzantine_vote(3, 4, True)
+                vote = byzantine_vote(3, True)
 
-                print vote
                 # add a random value to the votes store
                 self.server.votes[self.server.vessel_id] = vote[-1]
                 # drop this value from the list
@@ -390,6 +450,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             # read the content of the file
             post_body = self.parse_POST_request()
             post_body = json.loads(post_body)
+
 
             # get the votes received
             step, value = post_body["step"], post_body["value"]

@@ -4,13 +4,12 @@
 #Compute byzantine votes for round 1, by trying to create
 #a split decision.
 #input: 
-#	number of loyal nodes,
-#	number of total nodes,
+#	number of loyal nodes
 #	Decision on a tie: True or False 
 #output:
 #	A list with votes to send to the loyal nodes
 #	in the form [True,False,True,.....]
-def compute_byzantine_vote_round1(no_loyal,no_total,on_tie):
+def compute_byzantine_vote_round1(no_loyal,on_tie):
 
   result_vote = []
   for i in range(0,no_loyal):
@@ -24,7 +23,6 @@ def compute_byzantine_vote_round1(no_loyal,no_total,on_tie):
 #on different directions for different nodes.
 #input: 
 #	number of loyal nodes,
-#	number of total nodes,
 #	Decision on a tie: True or False
 #output:
 #	A list where every element is a the vector that the 
