@@ -80,7 +80,8 @@ class BlackboardServer(HTTPServer):
         # duplicate the votes for each general
         # so we can have a vector for each general
         # [[True,False,..., True],[True,False,..., True],...]
-        while i < 3:
+        # TODO: Generalize
+        while i < 2:
             vector.append(votes)
             i += 1
 
@@ -96,9 +97,10 @@ class BlackboardServer(HTTPServer):
         values = self.vectors.values()
 
         # compare each element of the vector list
-        # [0,1,2,3],[0,1,2,3],[0,1,2,3]
-        while subindex_vector < 4:
-            while index_vector < 3:
+        # [0,1,2],[0,1,2]
+        # TODO: Generalize
+        while subindex_vector < 3:
+            while index_vector < 2:
                 temp_list.append(values[index_vector]
                                                 [subindex_vector])
                 index_vector += 1
@@ -131,7 +133,6 @@ class BlackboardServer(HTTPServer):
         if attack == retreat:
             result = None
 
-        print result
         return result
 
     # -------------------------------- Communication Functions --------------
@@ -340,21 +341,21 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
             # the current vessel may be an honest general
             # in that case, check if the vote store is full
-            if not self.server.byzantine and len(self.server.votes) == 4:
+            if not self.server.byzantine and len(self.server.votes) == 3:
                 # get the vector to propagate
                 vector_to_propagate = self.server.get_vector_to_send()
 
             # the current vessel may be a byzantine
             # in that case, check if only the current node's vote remains
-            elif self.server.byzantine and len(self.server.votes) == 3 :
+            elif self.server.byzantine and len(self.server.votes) == 2 :
                 # make it vote and store it for a later propagation
-                vote_to_propagate = byzantine_vote(3, True)
+                vote_to_propagate = byzantine_vote(2, True)
 
                 # add a random value to the votes store
                 self.server.votes[self.server.vessel_id] = vote_to_propagate[-1]
 
                 # get the vector to propagate
-                vector_to_propagate = byzantine_vector(3,4, True)
+                vector_to_propagate = byzantine_vector(2,3, True)
 
         # vector step
         elif step == 'vector' :
@@ -362,7 +363,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             self.server.vectors[source_id] = value
             # check if the vector list is full
             # the current vessel vector is not included
-            if len(self.server.vectors) == 3:
+            if len(self.server.vectors) == 2:
                 # calcul the result of the vote
                 self.server.get_result()
 
@@ -382,18 +383,20 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
 
         vote = None
 
+        # TODO: Generalize
+
         # it's an attack
         if path == '/vote/attack':
             # add it to the votes list
             self.server.votes[self.server.vessel_id]= True
             # set the vote variable to send to the other generals
-            vote = [True, True, True] # 3 other nodes
+            vote = [True, True] # 2 other nodes
         # it's a retreat
         elif path == '/vote/retreat':
             # add it to the votes list
             self.server.votes[self.server.vessel_id] = False
             # set the vote variable to send to the other generals
-            vote = [False, False, False]
+            vote = [False, False]
         # it's a byzantine vote
         elif path == '/vote/byzantine':
             # set the byzantine boolean
@@ -401,10 +404,10 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
             # the byzantine general waits for all the honest generals'
             # votes
             # check if those votes have been received
-            if len(self.server.votes) == 3: # 3 honest generals
+            if len(self.server.votes) == 2: # 2 honest generals
 
                 # make the byzantine node vote
-                vote = byzantine_vote(3, True)
+                vote = byzantine_vote(2, True)
 
                 # add a random value to the votes store
                 self.server.votes[self.server.vessel_id] = vote[-1]
@@ -497,7 +500,7 @@ class BlackboardRequestHandler(BaseHTTPRequestHandler):
                 # its vector to the other nodes
                 if self.server.byzantine:
                     propagate_vector = True
-                    vectors = byzantine_vector(3,4,True)
+                    vectors = byzantine_vector(2,3,True)
 
             self.set_HTTP_headers()
 
